@@ -401,6 +401,29 @@ runs seven stages and fails loudly if any break:
 microsocks starts **only after** the tunnel is confirmed up — so a reachable port always
 means a working VPN exit, never a silent leak to your server's real IP.
 
+## Why the containers run privileged
+
+While connecting, the NordVPN daemon writes `net.ipv6.conf.all.disable_ipv6` through
+`/proc/sys`. Docker mounts `/proc/sys` read-only, so the write fails and the daemon
+aborts the whole connection:
+
+```
+failed to connect to usXXXX.nordvpn.com :
+sysctl: permission denied on key "net.ipv6.conf.all.disable_ipv6"
+```
+
+`--cap-add=NET_ADMIN`, `NET_RAW`, `SYS_MODULE` and the `src_valid_mark` sysctl are all
+necessary but not sufficient — only `--privileged` makes `/proc/sys` writable. So every
+location is created with `--privileged` plus `--sysctl net.ipv6.conf.all.disable_ipv6=1`.
+
+You can turn it off per location (menu 6 → item 12) or globally (menu 16 → item 8), but
+NordVPN will then fail to connect on current versions.
+
+> A privileged container can reach the host kernel. That is a real trade-off: you are
+> trusting the NordVPN client and this image with root-equivalent access to the box.
+> Run it on a machine where that is acceptable, and keep the SOCKS ports bound to
+> `127.0.0.1`.
+
 ## Security
 
 - The access token is a credential. Stored at `/opt/nordlynx-manager/.token` (0600) and in each
@@ -415,8 +438,10 @@ means a working VPN exit, never a silent leak to your server's real IP.
 |---|---|
 | `Couldn't find /run/nordvpn/nordvpnd.sock` | Container needs `--cap-add=NET_ADMIN` + `/dev/net/tun` — rerun menu option 1 |
 | Login failed | Token expired/wrong — regenerate, menu option 2, then recreate containers |
-| Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one — with no TTY in a container it just hangs. v2.3.2 answers it non-interactively before logging in |
+| Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one. It only accepts the full words `yes`/`no` — `y`/`n` loop forever on `Invalid response`. v2.5.2 answers it correctly before logging in |
 | `We couldn't reach System Daemon` | The daemon socket appears before the daemon can answer. v2.4.0 polls until it really responds, and restarts the service once if it doesn't |
+| `We couldn't connect you to the VPN` and the daemon log says `nft failed with: exec: "nft": executable file not found` | The NordVPN 5.x daemon builds its firewall rules with **nftables**, so the `nft` binary must exist in the image. Fixed in v2.5.1 — rebuild the image (menu 3) |
+| `We couldn't connect you to the VPN`, daemon log says `sysctl: permission denied on key "net.ipv6.conf.all.disable_ipv6"` | Docker mounts `/proc/sys` read-only. Fixed in v2.6.0 — containers now run with `--privileged`. Rebuild and recreate |
 | `We couldn't connect you to the VPN` on NordLynx | The **host** kernel needs the `wireguard` module — a container cannot provide it. Menu 1 installs and loads it. If your VPS kernel has no WireGuard support, containers automatically fall back to OpenVPN (v2.4.0) |
 | Updated the script but the container log looks unchanged | The entrypoint is baked **into the image**. Run menu 3 to rebuild, then recreate the containers. Since v2.3.3 the script detects this itself and offers the rebuild — the health line shows `image ▲` when the image is older than the script |
 | Stuck on `Disconnected` | Country name must match Nord's spelling with underscores: `United_Arab_Emirates` |

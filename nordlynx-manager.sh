@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.5.0"
+VERSION="2.6.0"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -41,6 +41,7 @@ DEF_AUTOCONNECT="on"
 DEF_LAN="on"
 DEF_ANALYTICS="off"
 DEF_INNER_PORT=1080
+DEF_PRIVILEGED="on"        # the NordVPN daemon writes to /proc/sys during connect
 BIND_ADDR_DEFAULT="127.0.0.1"
 
 UI_LANG="en"               # en | fi | fa | fa-raw | ru | zh
@@ -629,6 +630,25 @@ T_zh[m_debug]="诊断连接问题"
 T_fa[m_debug]="عیب‌یابی مشکل اتصال"
 T_fs[m_debug]='ﻝﺎﺼﺗﺍ ﻞﮑﺸﻣ ﯽﺑﺎﯾﺐﯿﻋ'
 
+T_en[s_priv]="Privileged"
+T_fi[s_priv]="Privileged"
+T_ru[s_priv]="Privileged"
+T_zh[s_priv]="特权模式"
+T_fa[s_priv]="Privileged"
+T_fs[s_priv]='Privileged'
+T_en[priv_why]="The NordVPN daemon writes net.ipv6.conf.all.disable_ipv6 while connecting. Docker mounts /proc/sys read-only, so without --privileged every connect fails with 'permission denied on key'."
+T_fi[priv_why]="Daemon-e Nord hengam-e connect rooye /proc/sys minevisad. Docker anra read-only mikonad, pas bedoon-e --privileged har ettesal fail mishavad."
+T_ru[priv_why]="Демон NordVPN при подключении пишет в /proc/sys. Docker монтирует его только для чтения, поэтому без --privileged подключение всегда падает."
+T_zh[priv_why]="NordVPN 守护进程在连接时会写入 /proc/sys。Docker 以只读方式挂载该路径，因此没有 --privileged 时连接必定失败。"
+T_fa[priv_why]="دیمن نورد هنگام اتصال روی ‎/proc/sys می‌نویسد. داکر آن را read-only مانت می‌کند، پس بدون ‎--privileged هر اتصال شکست می‌خورد."
+T_fs[priv_why]='.ﺩﺭﻮﺧﯽﻣ ﺖﺴﮑﺷ ﻝﺎﺼﺗﺍ ﺮﻫ ‎--privileged ﻥﻭﺪﺑ ﺲﭘ ،ﺪﻨﮐﯽﻣ ﺖﻧﺎﻣ read-only ﺍﺭ ﻥﺁ ﺮﮐﺍﺩ .ﺪﺴﯾﻮﻧﯽﻣ ‎/proc/sys ﯼﻭﺭ ﻝﺎﺼﺗﺍ ﻡﺎﮕﻨﻫ ﺩﺭﻮﻧ ﻦﻤﯾﺩ'
+T_en[priv_risk]="A privileged container can reach the host kernel. Only run images you trust."
+T_fi[priv_risk]="Container-e privileged be kernel-e host dastresi darad. Faghat image-e mo'tabar ejra kon."
+T_ru[priv_risk]="Привилегированный контейнер имеет доступ к ядру хоста. Запускайте только доверенные образы."
+T_zh[priv_risk]="特权容器可以访问宿主机内核，只运行你信任的镜像。"
+T_fa[priv_risk]="کانتینر privileged به کرنل هاست دسترسی دارد. فقط ایمیج مورد اعتماد اجرا کن."
+T_fs[priv_risk]='.ﻦﮐ ﺍﺮﺟﺍ ﺩﺎﻤﺘﻋﺍ ﺩﺭﻮﻣ ﺞﯿﻤﯾﺍ ﻂﻘﻓ .ﺩﺭﺍﺩ ﯽﺳﺮﺘﺳﺩ ﺖﺳﺎﻫ ﻞﻧﺮﮐ ﻪﺑ privileged ﺮﻨﯿﺘﻧﺎﮐ'
+
 t() { local k="$1" v=""
   case "$UI_LANG" in
     fi)     v="${T_fi[$k]:-}" ;;
@@ -1183,7 +1203,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg iproute2 iputils-ping procps \
         libcap2-bin sysvinit-utils net-tools \
         gcc make git libc6-dev \
-        wireguard-tools iptables openvpn \
+        wireguard-tools iptables nftables openvpn \
     && rm -rf /var/lib/apt/lists/*
 
 # --- NordVPN CLI (official repo) ---------------------------------------------
@@ -1194,12 +1214,6 @@ RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc \
     && apt-get update \
     && apt-get install -y --no-install-recommends nordvpn \
     && rm -rf /var/lib/apt/lists/*
-
-# --- iptables backend --------------------------------------------------------
-# Debian defaults to the nft backend; the NordVPN daemon expects legacy rules and
-# silently fails to build the tunnel when the two disagree inside a container.
-RUN update-alternatives --set iptables  /usr/sbin/iptables-legacy  || true \
- && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
 
 # --- microsocks (tiny SOCKS5 server) -----------------------------------------
 RUN git clone --depth 1 https://github.com/rofl0r/microsocks /tmp/microsocks \
@@ -1274,14 +1288,20 @@ say 2.5/7 "Privacy consent (NordVPN CLI 4.x/5.x asks for this on first run)"
 # Without an answer the daemon blocks every other command, and in a container
 # there is no TTY to answer on — so answer it non-interactively, several ways,
 # because the exact command moved between releases.
+# The prompt only accepts the full words "yes"/"no" — "y"/"n" loop forever.
+CONSENT_WORD="no"; [ "$ANALYTICS" = "on" ] && CONSENT_WORD="yes"
 CONSENT_ANSWER="deny"; [ "$ANALYTICS" = "on" ] && CONSENT_ANSWER="accept"
-nordvpn consent "$CONSENT_ANSWER"        </dev/null >/dev/null 2>&1 || true
-nordvpn set consent "$CONSENT_ANSWER"    </dev/null >/dev/null 2>&1 || true
-yes n | timeout 20 nordvpn set analytics "$ANALYTICS" >/dev/null 2>&1 || true
+yes "$CONSENT_WORD" | timeout 20 nordvpn consent "$CONSENT_ANSWER"     >/dev/null 2>&1 || true
+yes "$CONSENT_WORD" | timeout 20 nordvpn set analytics "$ANALYTICS"    >/dev/null 2>&1 || true
+# a bare command with the answer piped in also clears a pending prompt
+yes "$CONSENT_WORD" | timeout 20 nordvpn status                        >/dev/null 2>&1 || true
 echo "      $(nordvpn settings 2>/dev/null | grep -i 'consent' | head -1)"
 
 say 2.6/7 "Environment check"
 echo "      $(nordvpn version 2>&1 | head -1)"
+command -v nft >/dev/null 2>&1 \
+  && echo "      nft: $(nft --version 2>&1 | head -1)" \
+  || echo "      nft: MISSING — the NordVPN daemon needs it to build firewall rules"
 if [ "$TECH" = "NordLynx" ]; then
   if [ -d /sys/module/wireguard ]; then
     echo "      host wireguard module: present"
@@ -1298,7 +1318,7 @@ fi
 say 3/7 "Logging in with access token…"
 LOGIN_OK=0
 for i in 1 2 3; do
-  LOGIN_OUT="$(timeout 90 nordvpn login --token "$TOKEN" </dev/null 2>&1)"
+  LOGIN_OUT="$(yes "$CONSENT_WORD" | timeout 90 nordvpn login --token "$TOKEN" 2>&1)"
   # never echo the token itself, only the CLI's reply
   printf '%s\n' "$LOGIN_OUT" | sed 's/^/      /'
   if nordvpn account >/dev/null 2>&1; then LOGIN_OK=1; break; fi
@@ -1431,7 +1451,7 @@ cfg_reset() {
   CFG=( [name]="" [country]="United_States" [city]="" [hport]="" [iport]="$DEF_INNER_PORT"
         [bind]="$BIND_ADDR_DEFAULT" [tech]="$DEF_TECH" [proto]="$DEF_PROTO"
         [auto]="$DEF_AUTOCONNECT" [lan]="$DEF_LAN" [analytics]="$DEF_ANALYTICS"
-        [token]="$(tok_first)" )
+        [token]="$(tok_first)" [priv]="$DEF_PRIVILEGED" )
 }
 
 cfg_load() {   # cfg_load <container>
@@ -1442,7 +1462,8 @@ cfg_load() {   # cfg_load <container>
   CFG[country]="$(f country)";  CFG[hport]="$(f port)";  CFG[iport]="$(f iport)"
   CFG[bind]="$(f bind)";        CFG[tech]="$(f tech)";   CFG[proto]="$(f proto)"
   CFG[auto]="$(f auto)";        CFG[lan]="$(f lan)";     CFG[analytics]="$(f analytics)"
-  CFG[token]="$(f token)";      CFG[city]="$(f city)"
+  CFG[token]="$(f token)";      CFG[city]="$(f city)";   CFG[priv]="$(f priv)"
+  [[ -z "${CFG[priv]}" || "${CFG[priv]}" == "<no value>" ]] && CFG[priv]="$DEF_PRIVILEGED"
   [[ "${CFG[token]}" == "<no value>" ]] && CFG[token]=""
   [[ "${CFG[city]}"  == "<no value>" ]] && CFG[city]=""
   [[ -z "${CFG[token]}" ]] && CFG[token]="$(tok_first)"
@@ -1471,6 +1492,7 @@ cfg_show() {
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_auto)" 18)"   "$R" "$(on_off "${CFG[auto]}")"
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_lan)" 18)"  "$R" "$(on_off "${CFG[lan]}")"
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_analytics)" 18)"      "$R" "$(on_off "${CFG[analytics]}")"
+  printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_priv)" 18)"            "$R" "$(on_off "${CFG[priv]}")"
   printf '\n'
 }
 
@@ -1512,6 +1534,16 @@ cfg_create() {   # builds the container described by CFG
     warn "Host has no wireguard kernel module — this container will fall back to OpenVPN."
     warn "Run menu 1 to try installing it."
   fi
+  # The daemon needs a writable /proc/sys; Docker only allows that when the
+  # container is privileged. Without it every connect dies with:
+  #   sysctl: permission denied on key "net.ipv6.conf.all.disable_ipv6"
+  local -a privflags=()
+  if [[ "${CFG[priv]}" == "on" ]]; then
+    privflags=( --privileged --sysctl net.ipv6.conf.all.disable_ipv6=1 )
+  else
+    warn "Privileged mode is off — NordVPN will most likely fail to connect."
+  fi
+
   local token; token="$(token_get "${CFG[token]}")"
   [[ -z "$token" ]] && { bad "Token not found in the vault: ${CFG[token]}"; return 1; }
   if docker run -d \
@@ -1524,6 +1556,7 @@ cfg_create() {   # builds the container described by CFG
       -v /lib/modules:/lib/modules:ro \
       -v /run/systemd/resolve:/run/systemd/resolve:ro \
       --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+      "${privflags[@]}" \
       -p "${CFG[bind]}:${CFG[hport]}:${CFG[iport]}" \
       -e NORD_COUNTRY="${CFG[country]}" \
       -e NORD_CITY="${CFG[city]}" \
@@ -1539,6 +1572,7 @@ cfg_create() {   # builds the container described by CFG
       --label "${LABEL_NS}.country=${CFG[country]}" \
       --label "${LABEL_NS}.city=${CFG[city]}" \
       --label "${LABEL_NS}.token=${CFG[token]}" \
+      --label "${LABEL_NS}.priv=${CFG[priv]}" \
       --label "${LABEL_NS}.port=${CFG[hport]}" \
       --label "${LABEL_NS}.iport=${CFG[iport]}" \
       --label "${LABEL_NS}.bind=${CFG[bind]}" \
@@ -1711,6 +1745,7 @@ action_settings() {
     menu_item 9 "$(padr "$(t s_analytics)" 22)$(on_off "${CFG[analytics]}")"
     menu_item 10 "$(padr "$(t s_token)" 22)${B}${CFG[token]}${R}"
     menu_item 11 "$(padr "$(t s_city)" 22)${B}${CFG[city]:-any}${R}"
+    menu_item 12 "$(padr "$(t s_priv)" 22)$(on_off "${CFG[priv]}")"
     printf '\n'
     menu_item "A" "${B}${GRN}Apply — recreate the container${R}"
     menu_item 0 "Back (discard)"
@@ -1735,6 +1770,8 @@ action_settings() {
       9) CFG[analytics]="$(toggle "${CFG[analytics]}")"; dirty=1 ;;
       10) local tn; tn="$(pick_token)" && { CFG[token]="$tn"; dirty=1; } ;;
       11) CFG[city]="$(pick_city "${CFG[country]}")"; dirty=1 ;;
+      12) CFG[priv]="$(toggle "${CFG[priv]}")"; dirty=1
+          [[ "${CFG[priv]}" == "off" ]] && { warn "$(t priv_why)"; sleep 3; } ;;
       a|A)
          if (( ! dirty )); then info "Nothing changed."; sleep 1; continue; fi
          printf '\n'; confirm "$(t applying)?" || continue
@@ -1759,6 +1796,7 @@ action_defaults() {
     menu_item 5 "$(padr "$(t s_analytics)" 22)$(on_off "$DEF_ANALYTICS")"
     menu_item 6 "$(padr "$(t s_iport)" 22)${B}${DEF_INNER_PORT}${R}"
     menu_item 7 "$(padr "$(t s_bind)" 22)${B}${BIND_ADDR_DEFAULT}${R}"
+    menu_item 8 "$(padr "$(t s_priv)" 22)$(on_off "$DEF_PRIVILEGED")"
     printf '\n'
     menu_item 0 "Back"
     printf '\n'
@@ -1771,6 +1809,8 @@ action_defaults() {
       5) DEF_ANALYTICS="$(toggle "$DEF_ANALYTICS")" ;;
       6) DEF_INNER_PORT="$(ask "$(t inner_port_prompt)" "$DEF_INNER_PORT")" ;;
       7) BIND_ADDR_DEFAULT="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")" ;;
+      8) DEF_PRIVILEGED="$(toggle "$DEF_PRIVILEGED")"
+         printf '\n'; info "$(t priv_why)"; warn "$(t priv_risk)"; sleep 3 ;;
       0|"") save_conf; return ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -2207,6 +2247,8 @@ action_debug() {
       --device=/dev/net/tun \
       -v /lib/modules:/lib/modules:ro \
       --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+      --sysctl net.ipv6.conf.all.disable_ipv6=1 \
+      --privileged \
       -e NORD_TOKEN="$token" \
       --entrypoint sleep "$IMAGE" infinity || { pause; return; }
 
@@ -2226,9 +2268,9 @@ action_debug() {
     done
     nordvpn version 2>&1
     echo "== consent + login =="
-    nordvpn consent deny </dev/null >/dev/null 2>&1
-    yes n | nordvpn set analytics off >/dev/null 2>&1
-    nordvpn login --token "$NORD_TOKEN" </dev/null 2>&1 | head -3
+    yes no | nordvpn consent deny >/dev/null 2>&1
+    yes no | nordvpn set analytics off >/dev/null 2>&1
+    yes no | nordvpn login --token "$NORD_TOKEN" 2>&1 | head -3
     echo "== settings =="
     nordvpn settings 2>&1
     echo "== connect attempt =="
@@ -2456,6 +2498,7 @@ DEF_AUTOCONNECT=$DEF_AUTOCONNECT
 DEF_LAN=$DEF_LAN
 DEF_ANALYTICS=$DEF_ANALYTICS
 DEF_INNER_PORT=$DEF_INNER_PORT
+DEF_PRIVILEGED=$DEF_PRIVILEGED
 BIND_ADDR_DEFAULT=$BIND_ADDR_DEFAULT
 EOF
   chmod 600 "$CONF_FILE"

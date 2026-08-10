@@ -61,7 +61,7 @@ Route per-domain, per-user or per-inbound however you like.
     3  Build the proxy image
 
     4  Create a new location
-    5  Quick setup — build the classic 5 locations
+    5  Quick setup — pick any of the classic 5 locations
     6  Location settings (country, protocol, port, toggles)
 
     7  Live status dashboard
@@ -178,6 +178,22 @@ drops you back at the main menu — no dead-end screens.
 > token after sending it — Telegram keeps chat history.
 
 Everything is number-driven. No file editing, no `docker run` copy-paste.
+
+## Quick setup (menu 5)
+
+Not all-or-nothing — pick exactly what you want, and busy ports are flagged before
+you choose:
+
+```
+    1 ! 🇺🇸 United_States        → 127.0.0.1:1081  (port busy — container nord-1-usa)
+    2   🇹🇷 Turkey               → 127.0.0.1:1082
+    3   🇦🇪 United_Arab_Emirates → 127.0.0.1:1083
+    4   🇦🇺 Australia            → 127.0.0.1:1084
+    5   🇳🇱 Netherlands          → 127.0.0.1:1085
+
+  Pick what to build: a single number (3), a list (1,3,5), a range (1-3) or all.
+  ? Which locations? [all]:
+```
 
 ## Per-location settings (menu 6)
 
@@ -399,6 +415,8 @@ means a working VPN exit, never a silent leak to your server's real IP.
 | `Couldn't find /run/nordvpn/nordvpnd.sock` | Container needs `--cap-add=NET_ADMIN` + `/dev/net/tun` — rerun menu option 1 |
 | Login failed | Token expired/wrong — regenerate, menu option 2, then recreate containers |
 | Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one — with no TTY in a container it just hangs. v2.3.2 answers it non-interactively before logging in |
+| `We couldn't reach System Daemon` | The daemon socket appears before the daemon can answer. v2.4.0 polls until it really responds, and restarts the service once if it doesn't |
+| `We couldn't connect you to the VPN` on NordLynx | The **host** kernel needs the `wireguard` module — a container cannot provide it. Menu 1 installs and loads it. If your VPS kernel has no WireGuard support, containers automatically fall back to OpenVPN (v2.4.0) |
 | Updated the script but the container log looks unchanged | The entrypoint is baked **into the image**. Run menu 3 to rebuild, then recreate the containers. Since v2.3.3 the script detects this itself and offers the rebuild — the health line shows `image ▲` when the image is older than the script |
 | Stuck on `Disconnected` | Country name must match Nord's spelling with underscores: `United_Arab_Emirates` |
 | Wrong country IP | Recreate that location (menu 6); Nord occasionally lands on a neighbouring PoP |

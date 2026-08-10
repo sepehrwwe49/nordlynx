@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.3.3"
+VERSION="2.4.1"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -77,7 +77,7 @@ T_en[m_deps]="Install prerequisites (Docker, tun, tools)"
 T_en[m_token]="Set / update NordVPN access token"
 T_en[m_build]="Build the proxy image"
 T_en[m_add]="Create a new location"
-T_en[m_batch]="Quick setup — build the classic 5 locations"
+T_en[m_batch]="Quick setup — pick any of the classic 5 locations"
 T_en[m_settings]="Location settings (country, protocol, port, toggles)"
 T_en[m_status]="Live status dashboard"
 T_en[m_test]="Test all proxies (real exit IP + country)"
@@ -144,7 +144,7 @@ T_fi[m_deps]="Nasb-e pishniazha (Docker, tun, abzarha)"
 T_fi[m_token]="Sabt ya taghir-e access token-e Nord"
 T_fi[m_build]="Sakht-e image-e proxy"
 T_fi[m_add]="Sakht-e location-e jadid"
-T_fi[m_batch]="Nasb-e sari — sakht-e 5 location-e classic"
+T_fi[m_batch]="Nasb-e sari — har kodam az 5 location-e classic"
 T_fi[m_settings]="Tanzimat-e location (keshvar, protocol, port, kelidha)"
 T_fi[m_status]="Dashboard-e vaziat-e zende"
 T_fi[m_test]="Test-e hame proxy-ha (IP va keshvar-e vaghei)"
@@ -211,7 +211,7 @@ T_ru[m_deps]="Установить зависимости (Docker, tun, утил
 T_ru[m_token]="Задать или обновить токен доступа NordVPN"
 T_ru[m_build]="Собрать образ прокси"
 T_ru[m_add]="Создать новую локацию"
-T_ru[m_batch]="Быстрый старт — создать 5 классических локаций"
+T_ru[m_batch]="Быстрый старт — выберите из 5 классических локаций"
 T_ru[m_settings]="Настройки локации (страна, протокол, порт, флаги)"
 T_ru[m_status]="Панель состояния"
 T_ru[m_test]="Проверить все прокси (реальный IP и страна)"
@@ -278,7 +278,7 @@ T_zh[m_deps]="安装依赖 (Docker、tun、工具)"
 T_zh[m_token]="设置或更新 NordVPN 访问令牌"
 T_zh[m_build]="构建代理镜像"
 T_zh[m_add]="新建一个节点"
-T_zh[m_batch]="快速部署 — 创建经典 5 个节点"
+T_zh[m_batch]="快速部署 — 从经典 5 个节点中任选"
 T_zh[m_settings]="节点设置 (国家、协议、端口、开关)"
 T_zh[m_status]="实时状态面板"
 T_zh[m_test]="测试所有代理 (真实出口 IP 与国家)"
@@ -345,7 +345,7 @@ T_fa[m_deps]="نصب پیش‌نیازها (داکر، tun، ابزارها)"
 T_fa[m_token]="ثبت یا تغییر اکسس‌توکن نورد"
 T_fa[m_build]="ساخت ایمیج پروکسی"
 T_fa[m_add]="ساخت لوکیشن جدید"
-T_fa[m_batch]="نصب سریع — ساخت ۵ لوکیشن کلاسیک"
+T_fa[m_batch]="نصب سریع — هرکدام از ۵ لوکیشن کلاسیک"
 T_fa[m_settings]="تنظیمات لوکیشن (کشور، پروتکل، پورت، کلیدها)"
 T_fa[m_status]="داشبورد وضعیت زنده"
 T_fa[m_test]="تست همه پروکسی‌ها (آی‌پی و کشور واقعی)"
@@ -432,7 +432,7 @@ T_fs[m_deps]='(ﺎﻫﺭﺍﺰﺑﺍ ،tun ،ﺮﮐﺍﺩ) ﺎﻫﺯﺎﯿﻧﺶ
 T_fs[m_token]='ﺩﺭﻮﻧ ﻦﮐﻮﺗﺲﺴﮐﺍ ﺮﯿﯿﻐﺗ ﺎﯾ ﺖﺒﺛ'
 T_fs[m_build]='ﯽﺴﮐﻭﺮﭘ ﺞﯿﻤﯾﺍ ﺖﺧﺎﺳ'
 T_fs[m_add]='ﺪﯾﺪﺟ ﻦﺸﯿﮐﻮﻟ ﺖﺧﺎﺳ'
-T_fs[m_batch]='ﮏﯿﺳﻼﮐ ﻦﺸﯿﮐﻮﻟ ۵ ﺖﺧﺎﺳ — ﻊﯾﺮﺳ ﺐﺼﻧ'
+T_fs[m_batch]='ﮏﯿﺳﻼﮐ ﻦﺸﯿﮐﻮﻟ ۵ ﺯﺍ ﻡﺍﺪﮐﺮﻫ — ﻊﯾﺮﺳ ﺐﺼﻧ'
 T_fs[m_settings]='(ﺎﻫﺪﯿﻠﮐ ،ﺕﺭﻮﭘ ،ﻞﮑﺗﻭﺮﭘ ،ﺭﻮﺸﮐ) ﻦﺸﯿﮐﻮﻟ ﺕﺎﻤﯿﻈﻨﺗ'
 T_fs[m_status]='ﻩﺪﻧﺯ ﺖﯿﻌﺿﻭ ﺩﺭﻮﺒﺷﺍﺩ'
 T_fs[m_test]='(ﯽﻌﻗﺍﻭ ﺭﻮﺸﮐ ﻭ ﯽﭘﯼﺁ) ﺎﻫﯽﺴﮐﻭﺮﭘ ﻪﻤﻫ ﺖﺴﺗ'
@@ -1040,6 +1040,27 @@ action_deps() {
   systemctl enable --now docker >/dev/null 2>&1 || true
   docker info >/dev/null 2>&1 && ok "Docker daemon is running" || bad "Docker daemon not running"
 
+  step "WireGuard kernel module (NordLynx needs it on the HOST)"
+  if [[ -d /sys/module/wireguard ]]; then
+    ok "wireguard module loaded"
+  else
+    modprobe wireguard 2>/dev/null
+    if [[ ! -d /sys/module/wireguard ]]; then
+      spin_run "Installing wireguard + kernel headers" \
+        env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+          wireguard wireguard-tools "linux-headers-$(uname -r)"
+      modprobe wireguard 2>/dev/null
+    fi
+    if [[ -d /sys/module/wireguard ]]; then
+      ok "wireguard module loaded"
+    else
+      bad "Could not load the wireguard module."
+      warn "NordLynx will not work on this host — locations will fall back to OpenVPN."
+      warn "On a VPS this usually means the provider's kernel has no WireGuard support."
+    fi
+  fi
+  grep -q '^wireguard$' /etc/modules 2>/dev/null || echo wireguard >>/etc/modules 2>/dev/null || true
+
   step "TUN device"
   modprobe tun 2>/dev/null || true
   if [[ -c /dev/net/tun ]]; then ok "/dev/net/tun present"
@@ -1182,6 +1203,7 @@ ENV NORD_COUNTRY=United_States \
     NORD_AUTOCONNECT=on \
     NORD_LAN=on \
     NORD_ANALYTICS=off \
+    NORD_FALLBACK=on \
     SOCKS_PORT=1080
 
 COPY entrypoint.sh /entrypoint.sh
@@ -1214,9 +1236,26 @@ die() { printf '\033[1;31m[FATAL]\033[0m %s\n' "$1"; exit 1; }
 say 1/7 "Starting NordVPN service…"
 /etc/init.d/nordvpn start >/dev/null 2>&1 || true
 
-say 2/7 "Waiting for NordVPN daemon socket…"
+say 2/7 "Waiting for NordVPN daemon…"
 for i in $(seq 1 60); do [ -S "$SOCK" ] && break; sleep 1; done
 [ -S "$SOCK" ] || die "Daemon socket never appeared: $SOCK"
+# The socket exists before the daemon is ready to answer. Poll until a real
+# command stops replying "We couldn't reach System Daemon".
+DAEMON_READY=0
+for i in $(seq 1 60); do
+  if ! nordvpn status 2>&1 | grep -qi "couldn't reach System Daemon"; then DAEMON_READY=1; break; fi
+  sleep 2
+done
+if [ "$DAEMON_READY" != "1" ]; then
+  echo "      daemon still not answering, restarting the service once…"
+  /etc/init.d/nordvpn restart >/dev/null 2>&1 || true
+  for i in $(seq 1 30); do
+    if ! nordvpn status 2>&1 | grep -qi "couldn't reach System Daemon"; then DAEMON_READY=1; break; fi
+    sleep 2
+  done
+fi
+[ "$DAEMON_READY" = "1" ] || die "NordVPN daemon never became reachable."
+echo "      daemon is answering"
 
 say 2.5/7 "Privacy consent (NordVPN CLI 4.x/5.x asks for this on first run)"
 # Without an answer the daemon blocks every other command, and in a container
@@ -1230,6 +1269,14 @@ echo "      $(nordvpn settings 2>/dev/null | grep -i 'consent' | head -1)"
 
 say 2.6/7 "Environment check"
 echo "      $(nordvpn version 2>&1 | head -1)"
+if [ "$TECH" = "NordLynx" ]; then
+  if [ -d /sys/module/wireguard ]; then
+    echo "      host wireguard module: present"
+  else
+    echo "      host wireguard module: MISSING — NordLynx cannot build a tunnel."
+    echo "      Fix on the HOST:  modprobe wireguard   (menu 1 does this for you)"
+  fi
+fi
 if curl -s --max-time 10 -o /dev/null -w '      api.nordvpn.com reachable: HTTP %{http_code}\n' \
      https://api.nordvpn.com/v1/helpers/ips/insights 2>/dev/null; then :; else
   echo "      WARNING: could not reach api.nordvpn.com from inside the container"
@@ -1306,11 +1353,22 @@ for attempt in 1 2 3; do
   nordvpn disconnect >/dev/null 2>&1 || true
   sleep 3
 done
+if [ "$CONNECTED" != "1" ] && [ "$TECH" = "NordLynx" ] && [ "${NORD_FALLBACK:-on}" = "on" ]; then
+  echo "      NordLynx did not come up — falling back to OpenVPN for this container."
+  nordvpn set technology OpenVPN >/dev/null 2>&1 && nordvpn set protocol UDP >/dev/null 2>&1
+  try_connect
+  for i in $(seq 1 30); do
+    nordvpn status 2>/dev/null | grep -qi 'Status: Connected' && { CONNECTED=1; break; }
+    sleep 2
+  done
+  [ "$CONNECTED" = "1" ] && echo "      connected over OpenVPN (NordLynx was unavailable)"
+fi
 if [ "$CONNECTED" != "1" ]; then
   echo "--- diagnostics ------------------------------------------------------"
   nordvpn status   2>&1 | sed 's/^/      /'
   nordvpn settings 2>&1 | sed 's/^/      /'
   ip addr show 2>&1 | grep -E "nordlynx|tun" | sed 's/^/      /'
+  [ -d /sys/module/wireguard ] || echo "      host is missing the wireguard kernel module"
   echo "----------------------------------------------------------------------"
   die "Could not reach Connected state for ${COUNTRY}."
 fi
@@ -1432,6 +1490,10 @@ cfg_create() {   # builds the container described by CFG
   printf "\n  ${BLU}•${R} $(t creating)\n" "$B$name$R" \
     "$(country_flag "${CFG[country]}") ${CFG[country]}" "$B${CFG[hport]}$R"
 
+  if [[ "${CFG[tech]}" == "NordLynx" && ! -d /sys/module/wireguard ]]; then
+    warn "Host has no wireguard kernel module — this container will fall back to OpenVPN."
+    warn "Run menu 1 to try installing it."
+  fi
   local token; token="$(token_get "${CFG[token]}")"
   [[ -z "$token" ]] && { bad "Token not found in the vault: ${CFG[token]}"; return 1; }
   if docker run -d \
@@ -1450,6 +1512,7 @@ cfg_create() {   # builds the container described by CFG
       -e NORD_AUTOCONNECT="${CFG[auto]}" \
       -e NORD_LAN="${CFG[lan]}" \
       -e NORD_ANALYTICS="${CFG[analytics]}" \
+      -e NORD_FALLBACK=on \
       -e SOCKS_PORT="${CFG[iport]}" \
       --label "${LABEL_NS}.managed=1" \
       --label "${LABEL_NS}.country=${CFG[country]}" \
@@ -1535,13 +1598,44 @@ action_batch() {
   local -a plan=( "United_States|1081" "Turkey|1082" "United_Arab_Emirates|1083"
                   "Australia|1084" "Netherlands|1085" )
   printf '\n'
-  local e c p
+  local e c p i=0
   for e in "${plan[@]}"; do
     IFS='|' read -r c p <<<"$e"
-    printf '   %s %-24s → 127.0.0.1:%s%s%s\n' "$(country_flag "$c")" "$c" "$B" "$p" "$R"
+    i=$(( i + 1 ))
+    local mark="  " note=""
+    if port_in_use "$p"; then mark="${YLW}!${R} "; note="${GRY}(port busy — $(port_owner_text "$p"))${R}"; fi
+    printf '   %s%2d%s %s%s %-24s → 127.0.0.1:%s%s%s  %s\n' \
+      "$B$C3" "$i" "$R" "$mark" "$(country_flag "$c")" "$c" "$B" "$p" "$R" "$note"
   done
   printf '\n'
-  confirm "Create these 5 locations now?" || { warn "$(t cancelled)"; pause; return; }
+  printf '  %sPick what to build: a single number (3), a list (1,3,5), a range (1-3) or all.%s\n' "$GRY" "$R"
+  local sel; sel="$(ask "Which locations?" "all")"
+
+  # expand the selection into a list of indices
+  local -a want=()
+  if [[ "$sel" == "all" || "$sel" == "a" || -z "$sel" ]]; then
+    for (( i=1; i<=${#plan[@]}; i++ )); do want+=("$i"); done
+  else
+    local part lo hi
+    IFS=', ' read -r -a parts <<<"$sel"
+    for part in "${parts[@]}"; do
+      if [[ "$part" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+        lo="${BASH_REMATCH[1]}"; hi="${BASH_REMATCH[2]}"
+        for (( i=lo; i<=hi; i++ )); do (( i >= 1 && i <= ${#plan[@]} )) && want+=("$i"); done
+      elif [[ "$part" =~ ^[0-9]+$ ]]; then
+        (( part >= 1 && part <= ${#plan[@]} )) && want+=("$part")
+      fi
+    done
+  fi
+  if (( ${#want[@]} == 0 )); then bad "$(t invalid)"; pause; return; fi
+
+  printf '\n  %sSelected:%s ' "$GRY" "$R"
+  for i in "${want[@]}"; do
+    IFS='|' read -r c p <<<"${plan[$(( i - 1 ))]}"
+    printf '%s ' "$c"
+  done
+  printf '\n\n'
+  confirm "Create ${#want[@]} location(s) now?" || { warn "$(t cancelled)"; pause; return; }
   cfg_reset
   local tkn; tkn="$(pick_token)" || { pause; return; }
   CFG[token]="$tkn"
@@ -1549,11 +1643,12 @@ action_batch() {
   [[ "${CFG[tech]}" == "OpenVPN" ]] && CFG[proto]="$(pick_proto)" || CFG[proto]="UDP"
   local bind; bind="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")"
   local tech="${CFG[tech]}" proto="${CFG[proto]}"
-  local i=0
-  for e in "${plan[@]}"; do
+  local done_n=0 total=${#want[@]}
+  for i in "${want[@]}"; do
+    e="${plan[$(( i - 1 ))]}"
     IFS='|' read -r c p <<<"$e"
-    i=$(( i + 1 ))
-    printf '\n  %s─── [%d/5] %s ───%s\n' "$C1" "$i" "$c" "$R"
+    done_n=$(( done_n + 1 ))
+    printf '\n  %s─── [%d/%d] %s ───%s\n' "$C1" "$done_n" "$total" "$c" "$R"
     if port_in_use "$p"; then
       p="$(resolve_port "$p")" || { warn "Skipped $c"; continue; }
     fi

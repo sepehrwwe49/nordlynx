@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.6.0"
+VERSION="2.6.1"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -883,6 +883,15 @@ list_locations() {
 }
 loc_count() { list_locations | grep -c . ; }
 
+# name of the managed container published on a given host port ("" if none)
+container_on_port() {
+  local want="$1" n c p rest
+  while IFS=$'\t' read -r n c p rest; do
+    [[ "$p" == "$want" ]] && { printf '%s' "$n"; return 0; }
+  done < <(list_locations)
+  return 1
+}
+
 next_free_port() { local p=1081; while port_in_use "$p"; do p=$(( p + 1 )); done; printf '%s' "$p"; }
 
 # port_owner <port> -> "container|<name>|managed"  "container|<name>|foreign"
@@ -1374,27 +1383,33 @@ try_connect() {
     nordvpn connect "$COUNTRY" 2>&1 | sed 's|^|      |'
   fi
 }
+# Some countries hand out a bad server now and then; each retry gets a new one.
 CONNECTED=0
-for attempt in 1 2 3; do
-  [ "$attempt" -gt 1 ] && say 6/7 "Retry ${attempt}/3…"
+for attempt in 1 2 3 4 5; do
+  [ "$attempt" -gt 1 ] && say 6/7 "Retry ${attempt}/5 (NordVPN picks a different server each time)…"
   try_connect
-  for i in $(seq 1 30); do
+  for i in $(seq 1 20); do
     nordvpn status 2>/dev/null | grep -qi 'Status: Connected' && { CONNECTED=1; break; }
     sleep 2
   done
   [ "$CONNECTED" = "1" ] && break
   nordvpn disconnect >/dev/null 2>&1 || true
-  sleep 3
+  sleep 2
 done
 if [ "$CONNECTED" != "1" ] && [ "$TECH" = "NordLynx" ] && [ "${NORD_FALLBACK:-on}" = "on" ]; then
   echo "      NordLynx did not come up — falling back to OpenVPN for this container."
-  nordvpn set technology OpenVPN >/dev/null 2>&1 && nordvpn set protocol UDP >/dev/null 2>&1
-  try_connect
-  for i in $(seq 1 30); do
-    nordvpn status 2>/dev/null | grep -qi 'Status: Connected' && { CONNECTED=1; break; }
-    sleep 2
+  nordvpn set technology OpenVPN >/dev/null 2>&1
+  for fb_proto in UDP TCP; do
+    echo "      trying OpenVPN/${fb_proto}…"
+    nordvpn set protocol "$fb_proto" >/dev/null 2>&1
+    try_connect
+    for i in $(seq 1 20); do
+      nordvpn status 2>/dev/null | grep -qi 'Status: Connected' && { CONNECTED=1; break; }
+      sleep 2
+    done
+    [ "$CONNECTED" = "1" ] && { echo "      connected over OpenVPN/${fb_proto}"; break; }
+    nordvpn disconnect >/dev/null 2>&1 || true
   done
-  [ "$CONNECTED" = "1" ] && echo "      connected over OpenVPN (NordLynx was unavailable)"
 fi
 if [ "$CONNECTED" != "1" ]; then
   echo "--- diagnostics ------------------------------------------------------"
@@ -1587,10 +1602,16 @@ cfg_create() {   # builds the container described by CFG
     bad "docker run failed for $name"; return 1
   fi
 
-  wait_connected "$name" 420 || return 1
-  local ip; ip="$(curl -s --max-time 15 --proxy "socks5h://127.0.0.1:${CFG[hport]}" https://api.ipify.org || true)"
+  wait_connected "$name" 600 || return 1
+  # microsocks starts right after the tunnel; give it a few seconds to bind
+  local ip="" try
+  for try in 1 2 3 4 5 6; do
+    ip="$(curl -s --max-time 10 --proxy "socks5h://127.0.0.1:${CFG[hport]}" https://api.ipify.org || true)"
+    [[ -n "$ip" ]] && break
+    sleep 4
+  done
   [[ -n "$ip" ]] && ok "SOCKS5 live → ${CFG[bind]}:${CFG[hport]}  exit IP ${B}${ip}${R}" \
-                 || warn "Tunnel is up but the SOCKS test returned nothing yet."
+                 || warn "Tunnel is up but the SOCKS port did not answer yet — check menu 8 in a minute."
   log "created $name country=${CFG[country]} port=${CFG[hport]} tech=${CFG[tech]} proto=${CFG[proto]}"
 }
 
@@ -1699,6 +1720,7 @@ action_batch() {
   local bind; bind="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")"
   local tech="${CFG[tech]}" proto="${CFG[proto]}"
   local done_n=0 total=${#want[@]}
+  local -a good=() failed=()
   for i in "${want[@]}"; do
     e="${plan[$(( i - 1 ))]}"
     IFS='|' read -r c p <<<"$e"
@@ -1710,8 +1732,38 @@ action_batch() {
     cfg_reset
     CFG[country]="$c"; CFG[hport]="$p"; CFG[bind]="$bind"
     CFG[tech]="$tech"; CFG[proto]="$proto"; CFG[token]="$tkn"
-    cfg_create || warn "Continuing with the rest…"
+    if cfg_create; then
+      good+=("$c:$p")
+    else
+      failed+=("$c:$p")
+      warn "Continuing with the rest…"
+    fi
   done
+
+  printf '\n  %s%s%s\n' "$B$WHT" "Summary" "$R"
+  local item
+  for item in "${good[@]}";   do printf '   %s✔%s %s\n' "$GRN" "$R" "${item/:/ → port }"; done
+  for item in "${failed[@]}"; do printf '   %s✘%s %s\n' "$RED" "$R" "${item/:/ → port }"; done
+
+  if (( ${#failed[@]} > 0 )); then
+    printf '\n'
+    warn "NordVPN sometimes hands out a dead server for a specific country."
+    info "A retry usually lands on a different one."
+    if confirm "Retry the ${#failed[@]} failed location(s)?"; then
+      local retry=("${failed[@]}"); failed=()
+      for item in "${retry[@]}"; do
+        c="${item%%:*}"; p="${item##*:}"
+        printf '\n  %s─── retry %s ───%s\n' "$C1" "$c" "$R"
+        local stale; stale="$(container_on_port "$p" || true)"
+        [[ -n "$stale" ]] && docker rm -f "$stale" >/dev/null 2>&1
+        cfg_reset
+        CFG[country]="$c"; CFG[hport]="$p"; CFG[bind]="$bind"
+        CFG[tech]="$tech"; CFG[proto]="$proto"; CFG[token]="$tkn"
+        cfg_create || failed+=("$item")
+      done
+      (( ${#failed[@]} == 0 )) && ok "All locations are up now."
+    fi
+  fi
   printf '\n'; ok "$(t done)"
   pause
 }
@@ -1899,9 +1951,9 @@ action_power() {
   menu_item 1 "Restart"; menu_item 2 "Stop"; menu_item 3 "Start"
   printf '\n'
   case "$(ask "$(t choose)" "1")" in
-    1) spin_run "Restarting $name" docker restart "$name"; wait_connected "$name" 420 ;;
+    1) spin_run "Restarting $name" docker restart "$name"; wait_connected "$name" 600 ;;
     2) spin_run "Stopping $name"  docker stop "$name" ;;
-    3) spin_run "Starting $name"  docker start "$name"; wait_connected "$name" 420 ;;
+    3) spin_run "Starting $name"  docker start "$name"; wait_connected "$name" 600 ;;
     *) bad "$(t invalid)" ;;
   esac
   pause

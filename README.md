@@ -77,9 +77,38 @@ Route per-domain, per-user or per-inbound however you like.
    16  Defaults for new locations
    17  Telegram bot (remote control)
    18  Language / Zaban / Язык / 语言
-   19  Update from GitHub
+   19  Port map (see and free busy ports)
+   20  Update from GitHub
 
     0  Quit
+```
+
+## Busy ports (menu 19)
+
+A port conflict never just fails any more. Whenever a port is taken — while adding a
+location, during quick setup, or when changing a port — the script tells you exactly
+*who* holds it and offers a way out:
+
+```
+  ▲ Port 1081 is taken by: container nord-1-usa (managed by this script)
+
+    1  Free that port (remove the container) and continue
+    2  Use the next free port instead  → 1086
+    3  Type another port
+    0  Skip this location
+```
+
+Foreign containers (from an older manual setup, for example) ask for an extra
+confirmation before removal. Host processes are reported but never touched.
+
+Menu **19** shows the whole neighbourhood at a glance and can free a port on demand:
+
+```
+  PORT    STATE        OWNER
+  1080    free
+  1081    ours         nord-1-usa
+  1082    foreign      old-manual-turkey
+  1090    host proc    "nginx",pid=9,fd=6
 ```
 
 ## Multiple access tokens (menu 2)
@@ -316,6 +345,8 @@ sudo nordlynx --test          # exit-IP test for every proxy
 sudo nordlynx --export        # regenerate outbounds.json
 sudo nordlynx --wg NAME       # print a location's WireGuard config
 sudo nordlynx --heal          # one watchdog pass
+sudo nordlynx --ports         # port map 1080–1100
+sudo nordlynx --update        # pull the latest version from GitHub
 sudo nordlynx --bot           # run the Telegram bot in the foreground
 ```
 
@@ -367,11 +398,14 @@ means a working VPN exit, never a silent leak to your server's real IP.
 |---|---|
 | `Couldn't find /run/nordvpn/nordvpnd.sock` | Container needs `--cap-add=NET_ADMIN` + `/dev/net/tun` — rerun menu option 1 |
 | Login failed | Token expired/wrong — regenerate, menu option 2, then recreate containers |
+| Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one — with no TTY in a container it just hangs. v2.3.2 answers it non-interactively before logging in |
 | Stuck on `Disconnected` | Country name must match Nord's spelling with underscores: `United_Arab_Emirates` |
 | Wrong country IP | Recreate that location (menu 6); Nord occasionally lands on a neighbouring PoP |
 | `Port already in use` | `ss -lntp \| grep :1085` then remove the stale container |
 | Build fails on `apt` | Server DNS/network blocked — check `docker run --rm debian:bookworm-slim apt-get update` |
 | `unistd.h: No such file or directory` while compiling microsocks | Fixed in v2.1.1 — `gcc` only *recommends* `libc6-dev`, which `--no-install-recommends` skipped. Update the script and rerun menu 3 |
+| Stuck on "Waiting for VPN tunnel" then timeout | v2.2.1 adds the flags WireGuard needs in a container (`NET_RAW`, `src_valid_mark=1`) and turns Nord's own firewall/killswitch off. Update, delete the stuck container, rebuild. The timeout now prints the container log automatically |
+| Port already busy | v2.3.0 shows who holds it and offers to free it, use the next free port, type another, or skip. Menu 19 maps ports 1080–1100 |
 
 ## Uninstall
 

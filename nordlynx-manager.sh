@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.2.0"
+VERSION="2.3.2"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -578,6 +578,43 @@ T_zh[m_update]="从 GitHub 更新"
 T_fa[m_update]="آپدیت از گیت‌هاب"
 T_fs[m_update]='ﺏﺎﻫﺖﯿﮔ ﺯﺍ ﺖﯾﺪﭘﺁ'
 
+T_en[m_ports]="Port map (see and free busy ports)"
+T_fi[m_ports]="Naghshe-ye port-ha (didan va azad kardan)"
+T_ru[m_ports]="Карта портов (посмотреть и освободить)"
+T_zh[m_ports]="端口地图 (查看并释放占用)"
+T_fa[m_ports]="نقشه پورت‌ها (دیدن و آزاد کردن)"
+T_fs[m_ports]='(ﻥﺩﺮﮐ ﺩﺍﺯﺁ ﻭ ﻥﺪﯾﺩ) ﺎﻫﺕﺭﻮﭘ ﻪﺸﻘﻧ'
+T_en[port_owner]="Port %s is taken by: %s"
+T_fi[port_owner]="Port %s dast-e: %s"
+T_ru[port_owner]="Порт %s занят: %s"
+T_zh[port_owner]="端口 %s 被占用: %s"
+T_fa[port_owner]="پورت %s در اختیار: %s"
+T_fs[port_owner]='%2$s :ﺭﺎﯿﺘﺧﺍ ﺭﺩ %1$s ﺕﺭﻮﭘ'
+T_en[p_free]="Free that port (remove the container) and continue"
+T_fi[p_free]="Azad kon (container ra hazf kon) va edame bede"
+T_ru[p_free]="Освободить порт (удалить контейнер) и продолжить"
+T_zh[p_free]="释放该端口 (删除容器) 并继续"
+T_fa[p_free]="آزاد کن (کانتینر را حذف کن) و ادامه بده"
+T_fs[p_free]='ﻩﺪﺑ ﻪﻣﺍﺩﺍ ﻭ (ﻦﮐ ﻑﺬﺣ ﺍﺭ ﺮﻨﯿﺘﻧﺎﮐ) ﻦﮐ ﺩﺍﺯﺁ'
+T_en[p_other]="Use the next free port instead"
+T_fi[p_other]="Az port-e azad-e badi estefade kon"
+T_ru[p_other]="Использовать следующий свободный порт"
+T_zh[p_other]="改用下一个空闲端口"
+T_fa[p_other]="از پورت آزاد بعدی استفاده کن"
+T_fs[p_other]='ﻦﮐ ﻩﺩﺎﻔﺘﺳﺍ ﯼﺪﻌﺑ ﺩﺍﺯﺁ ﺕﺭﻮﭘ ﺯﺍ'
+T_en[p_type]="Type another port"
+T_fi[p_type]="Yek port-e digar benevis"
+T_ru[p_type]="Ввести другой порт"
+T_zh[p_type]="输入其他端口"
+T_fa[p_type]="یک پورت دیگر بنویس"
+T_fs[p_type]='ﺲﯾﻮﻨﺑ ﺮﮕﯾﺩ ﺕﺭﻮﭘ ﮏﯾ'
+T_en[p_skip]="Skip this location"
+T_fi[p_skip]="In location ra rad kon"
+T_ru[p_skip]="Пропустить эту локацию"
+T_zh[p_skip]="跳过此节点"
+T_fa[p_skip]="از این لوکیشن بگذر"
+T_fs[p_skip]='ﺭﺬﮕﺑ ﻦﺸﯿﮐﻮﻟ ﻦﯾﺍ ﺯﺍ'
+
 t() { local k="$1" v=""
   case "$UI_LANG" in
     fi)     v="${T_fi[$k]:-}" ;;
@@ -796,6 +833,71 @@ list_locations() {
 loc_count() { list_locations | grep -c . ; }
 
 next_free_port() { local p=1081; while port_in_use "$p"; do p=$(( p + 1 )); done; printf '%s' "$p"; }
+
+# port_owner <port> -> "container|<name>|managed"  "container|<name>|foreign"
+#                      "process|<desc>|host"       "" when free
+port_owner() {
+  local p="$1" line name managed
+  line="$(docker ps -a --format '{{.Names}}\t{{.Ports}}\t{{.Label "'"${LABEL_NS}"'.managed"}}' 2>/dev/null \
+          | awk -F'\t' -v p="$p" 'index($2, ":" p "->") {print; exit}')"
+  if [[ -n "$line" ]]; then
+    name="$(cut -f1 <<<"$line")"; managed="$(cut -f3 <<<"$line")"
+    [[ "$managed" == "1" ]] && printf 'container|%s|managed' "$name" || printf 'container|%s|foreign' "$name"
+    return
+  fi
+  if have ss; then
+    local proc
+    proc="$(ss -lntpH "sport = :$p" 2>/dev/null | head -1 | grep -o 'users:((.*))' | sed 's/users:((//; s/))$//')"
+    [[ -n "$proc" ]] && { printf 'process|%s|host' "$proc"; return; }
+  fi
+  port_in_use "$p" && printf 'process|unknown listener|host'
+}
+
+port_owner_text() {   # human sentence for a port, "" when free
+  local o; o="$(port_owner "$1")"; [[ -z "$o" ]] && return
+  local kind name scope; IFS='|' read -r kind name scope <<<"$o"
+  case "$kind:$scope" in
+    container:managed) printf 'container %s (managed by this script)' "$name" ;;
+    container:foreign) printf 'container %s (NOT managed by this script)' "$name" ;;
+    *)                 printf 'host process %s' "$name" ;;
+  esac
+}
+
+# resolve_port <wanted_port> -> echoes a usable port, or nothing when skipped
+resolve_port() {
+  local want="$1" o kind name scope
+  while true; do
+    if ! port_in_use "$want"; then printf '%s' "$want"; return 0; fi
+    o="$(port_owner "$want")"; IFS='|' read -r kind name scope <<<"$o"
+    printf '\n' >&2
+    # shellcheck disable=SC2059
+    printf "  ${YLW}▲${R} $(t port_owner)\n" "$B$want$R" "$(port_owner_text "$want")" >&2
+    printf '\n' >&2
+    if [[ "$kind" == "container" ]]; then
+      menu_item 1 "$(t p_free)" >&2
+    else
+      printf '   %s 1%s  %s%s%s\n' "$GRY" "$R" "$D" "(a host process holds it — free it yourself)" "$R" >&2
+    fi
+    menu_item 2 "$(t p_other)  ${GRY}→ $(next_free_port)${R}" >&2
+    menu_item 3 "$(t p_type)" >&2
+    menu_item 0 "$(t p_skip)" >&2
+    printf '\n' >&2
+    case "$(ask "$(t choose)" "2")" in
+      1) if [[ "$kind" == "container" ]]; then
+           if [[ "$scope" == "foreign" ]]; then
+             confirm "Remove foreign container '$name'? This is NOT one of ours." >&2 || continue
+           fi
+           spin_run "Removing $name" docker rm -f "$name" >&2
+           sleep 1
+         fi ;;
+      2) want="$(next_free_port)" ;;
+      3) local p2; p2="$(ask "$(t port_prompt)" "$(next_free_port)")"
+         [[ "$p2" =~ ^[0-9]+$ ]] && want="$p2" ;;
+      0|"") return 1 ;;
+      *) : ;;
+    esac
+  done
+}
 
 pick_location() {
   local -a names=() rows=()
@@ -1092,12 +1194,43 @@ say 2/7 "Waiting for NordVPN daemon socket…"
 for i in $(seq 1 60); do [ -S "$SOCK" ] && break; sleep 1; done
 [ -S "$SOCK" ] || die "Daemon socket never appeared: $SOCK"
 
+say 2.5/7 "Privacy consent (NordVPN CLI 4.x/5.x asks for this on first run)"
+# Without an answer the daemon blocks every other command, and in a container
+# there is no TTY to answer on — so answer it non-interactively, several ways,
+# because the exact command moved between releases.
+CONSENT_ANSWER="deny"; [ "$ANALYTICS" = "on" ] && CONSENT_ANSWER="accept"
+nordvpn consent "$CONSENT_ANSWER"        </dev/null >/dev/null 2>&1 || true
+nordvpn set consent "$CONSENT_ANSWER"    </dev/null >/dev/null 2>&1 || true
+yes n | timeout 20 nordvpn set analytics "$ANALYTICS" >/dev/null 2>&1 || true
+echo "      $(nordvpn settings 2>/dev/null | grep -i 'consent' | head -1)"
+
+say 2.6/7 "Environment check"
+echo "      $(nordvpn version 2>&1 | head -1)"
+if curl -s --max-time 10 -o /dev/null -w '      api.nordvpn.com reachable: HTTP %{http_code}\n' \
+     https://api.nordvpn.com/v1/helpers/ips/insights 2>/dev/null; then :; else
+  echo "      WARNING: could not reach api.nordvpn.com from inside the container"
+fi
+
 say 3/7 "Logging in with access token…"
+LOGIN_OK=0
 for i in 1 2 3; do
-  nordvpn login --token "$TOKEN" 2>&1 | grep -qiE 'welcome|already logged' && break
-  sleep 3
+  LOGIN_OUT="$(timeout 90 nordvpn login --token "$TOKEN" </dev/null 2>&1)"
+  # never echo the token itself, only the CLI's reply
+  printf '%s\n' "$LOGIN_OUT" | sed 's/^/      /'
+  if nordvpn account >/dev/null 2>&1; then LOGIN_OK=1; break; fi
+  case "$LOGIN_OUT" in
+    *"already logged in"*|*"Already logged in"*) LOGIN_OK=1; break ;;
+  esac
+  echo "      attempt $i failed, retrying…"
+  sleep 5
 done
-nordvpn account >/dev/null 2>&1 || die "Login failed — token invalid or expired."
+if [ "$LOGIN_OK" != "1" ]; then
+  echo "--- diagnostics ------------------------------------------------------"
+  nordvpn account 2>&1 | sed 's/^/      /'
+  echo "----------------------------------------------------------------------"
+  die "Login failed — token invalid/expired, account inactive, or the API is unreachable."
+fi
+nordvpn account 2>&1 | sed 's/^/      /' 
 
 say 4/7 "Applying settings: tech=${TECH} proto=${PROTO} lan=${LAN} analytics=${ANALYTICS}"
 nordvpn set technology "$TECH" >/dev/null 2>&1 || die "Unsupported technology: $TECH"
@@ -1107,6 +1240,12 @@ else
   [ "$PROTO" = "TCP" ] && echo "      NordLynx is UDP-only — ignoring TCP request"
 fi
 nordvpn set analytics "$ANALYTICS"    >/dev/null 2>&1 || true
+# Inside a container the Nord firewall/killswitch fights docker's own rules and
+# is pointless (the container has no other route out) — turn both off.
+nordvpn set firewall off              >/dev/null 2>&1 || true
+nordvpn set killswitch off            >/dev/null 2>&1 || true
+nordvpn set ipv6 off                  >/dev/null 2>&1 || true
+nordvpn set routing on                >/dev/null 2>&1 || true
 nordvpn set lan-discovery "$LAN"      >/dev/null 2>&1 || true
 nordvpn allowlist add port "$PORT"    >/dev/null 2>&1 || \
   nordvpn whitelist add port "$PORT"  >/dev/null 2>&1 || true
@@ -1124,17 +1263,33 @@ else
 fi
 
 say 6/7 "Connecting to ${COUNTRY}${CITY:+ / $CITY}…"
-if [ -n "$CITY" ]; then
-  nordvpn connect "$COUNTRY" "$CITY" 2>&1 | sed 's|^|      |'
-else
-  nordvpn connect "$COUNTRY" 2>&1 | sed 's/^/      /'
-fi
+try_connect() {
+  if [ -n "$CITY" ]; then
+    nordvpn connect "$COUNTRY" "$CITY" 2>&1 | sed 's|^|      |'
+  else
+    nordvpn connect "$COUNTRY" 2>&1 | sed 's|^|      |'
+  fi
+}
 CONNECTED=0
-for i in $(seq 1 60); do
-  nordvpn status 2>/dev/null | grep -qi 'Status: Connected' && { CONNECTED=1; break; }
-  sleep 2
+for attempt in 1 2 3; do
+  [ "$attempt" -gt 1 ] && say 6/7 "Retry ${attempt}/3…"
+  try_connect
+  for i in $(seq 1 30); do
+    nordvpn status 2>/dev/null | grep -qi 'Status: Connected' && { CONNECTED=1; break; }
+    sleep 2
+  done
+  [ "$CONNECTED" = "1" ] && break
+  nordvpn disconnect >/dev/null 2>&1 || true
+  sleep 3
 done
-[ "$CONNECTED" = "1" ] || die "Could not reach Connected state for ${COUNTRY}."
+if [ "$CONNECTED" != "1" ]; then
+  echo "--- diagnostics ------------------------------------------------------"
+  nordvpn status   2>&1 | sed 's/^/      /'
+  nordvpn settings 2>&1 | sed 's/^/      /'
+  ip addr show 2>&1 | grep -E "nordlynx|tun" | sed 's/^/      /'
+  echo "----------------------------------------------------------------------"
+  die "Could not reach Connected state for ${COUNTRY}."
+fi
 nordvpn status | sed 's/^/      /'
 
 say 7/7 "Starting microsocks on 0.0.0.0:${PORT}…"
@@ -1219,7 +1374,7 @@ cfg_show() {
 }
 
 wait_connected() {
-  local name="$1" timeout="${2:-240}" i=0 out=""
+  local name="$1" timeout="${2:-420}" i=0 out=""
   while (( i < timeout )); do
     if ! docker ps --format '{{.Names}}' | grep -qx "$name"; then
       printf '\n'; bad "Container exited early."; docker logs --tail 20 "$name" 2>&1 | sed 's/^/      /'; return 1
@@ -1233,7 +1388,12 @@ wait_connected() {
     progress "$i" "$timeout" "$(t waiting_conn)"
     sleep 2; i=$(( i + 2 ))
   done
-  printf '\n'; bad "$(t timeout)"; return 1
+  printf '\n'; bad "$(t timeout)"
+  printf '\n  %s─── last 25 log lines of %s ───%s\n' "$C1" "$name" "$R"
+  docker logs --tail 25 "$name" 2>&1 | sed 's/^/    /'
+  printf '\n'
+  warn "The container is left running so you can inspect it (menu 9 for a live tail)."
+  return 1
 }
 
 cfg_create() {   # builds the container described by CFG
@@ -1253,7 +1413,9 @@ cfg_create() {   # builds the container described by CFG
       --name "$name" \
       --restart unless-stopped \
       --cap-add=NET_ADMIN \
+      --cap-add=NET_RAW \
       --device=/dev/net/tun \
+      --sysctl net.ipv4.conf.all.src_valid_mark=1 \
       -p "${CFG[bind]}:${CFG[hport]}:${CFG[iport]}" \
       -e NORD_COUNTRY="${CFG[country]}" \
       -e NORD_CITY="${CFG[city]}" \
@@ -1282,7 +1444,7 @@ cfg_create() {   # builds the container described by CFG
     bad "docker run failed for $name"; return 1
   fi
 
-  wait_connected "$name" 300 || return 1
+  wait_connected "$name" 420 || return 1
   local ip; ip="$(curl -s --max-time 15 --proxy "socks5h://127.0.0.1:${CFG[hport]}" https://api.ipify.org || true)"
   [[ -n "$ip" ]] && ok "SOCKS5 live → ${CFG[bind]}:${CFG[hport]}  exit IP ${B}${ip}${R}" \
                  || warn "Tunnel is up but the SOCKS test returned nothing yet."
@@ -1318,10 +1480,7 @@ action_add() {
   printf '\n'
   local p; p="$(ask "$(t port_prompt)" "$(next_free_port)")"
   if ! [[ "$p" =~ ^[0-9]+$ ]] || (( p < 1 || p > 65535 )); then bad "$(t invalid)"; pause; return; fi
-  if port_in_use "$p"; then
-    # shellcheck disable=SC2059
-    printf "  ${RED}✘${R} $(t port_busy)\n" "$p"; pause; return
-  fi
+  p="$(resolve_port "$p")" || { warn "$(t cancelled)"; pause; return; }
   CFG[hport]="$p"
   CFG[iport]="$(ask "$(t inner_port_prompt)" "$DEF_INNER_PORT")"
   CFG[bind]="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")"
@@ -1360,7 +1519,9 @@ action_batch() {
     IFS='|' read -r c p <<<"$e"
     i=$(( i + 1 ))
     printf '\n  %s─── [%d/5] %s ───%s\n' "$C1" "$i" "$c" "$R"
-    if port_in_use "$p"; then warn "Port $p already busy — skipping $c"; continue; fi
+    if port_in_use "$p"; then
+      p="$(resolve_port "$p")" || { warn "Skipped $c"; continue; }
+    fi
     cfg_reset
     CFG[country]="$c"; CFG[hport]="$p"; CFG[bind]="$bind"
     CFG[tech]="$tech"; CFG[proto]="$proto"; CFG[token]="$tkn"
@@ -1409,10 +1570,11 @@ action_settings() {
       3) if [[ "${CFG[tech]}" == "NordLynx" ]]; then warn "$(t proto_note)"; sleep 2
          else CFG[proto]="$(pick_proto)"; dirty=1; fi ;;
       4) local p; p="$(ask "$(t port_prompt)" "${CFG[hport]}")"
-         if [[ "$p" != "${CFG[hport]}" ]] && port_in_use "$p"; then
-           # shellcheck disable=SC2059
-           printf "  ${RED}✘${R} $(t port_busy)\n" "$p"; sleep 2
-         elif [[ "$p" =~ ^[0-9]+$ ]]; then CFG[hport]="$p"; dirty=1; fi ;;
+         if [[ ! "$p" =~ ^[0-9]+$ ]]; then bad "$(t invalid)"; sleep 1
+         elif [[ "$p" == "${CFG[hport]}" ]]; then :
+         else
+           p="$(resolve_port "$p")" && { CFG[hport]="$p"; dirty=1; }
+         fi ;;
       5) local ip2; ip2="$(ask "$(t inner_port_prompt)" "${CFG[iport]}")"
          [[ "$ip2" =~ ^[0-9]+$ ]] && { CFG[iport]="$ip2"; dirty=1; } ;;
       6) CFG[bind]="$(ask "$(t bind_prompt)" "${CFG[bind]}")"; dirty=1
@@ -1546,9 +1708,9 @@ action_power() {
   menu_item 1 "Restart"; menu_item 2 "Stop"; menu_item 3 "Start"
   printf '\n'
   case "$(ask "$(t choose)" "1")" in
-    1) spin_run "Restarting $name" docker restart "$name"; wait_connected "$name" 300 ;;
+    1) spin_run "Restarting $name" docker restart "$name"; wait_connected "$name" 420 ;;
     2) spin_run "Stopping $name"  docker stop "$name" ;;
-    3) spin_run "Starting $name"  docker start "$name"; wait_connected "$name" 300 ;;
+    3) spin_run "Starting $name"  docker start "$name"; wait_connected "$name" 420 ;;
     *) bad "$(t invalid)" ;;
   esac
   pause
@@ -1821,6 +1983,57 @@ action_lang() {
   done
 }
 
+# =============================================================== port map =====
+action_ports() {
+  while true; do
+    banner; title "$(t m_ports)"
+    local from=1080 to=1100
+    printf '\n  %s%-7s %-12s %s%s\n' "$B$GRY" "PORT" "STATE" "OWNER" "$R"
+    printf '  %s%s%s\n' "$GRY" "$(printf '─%.0s' $(seq 1 70))" "$R"
+    local p o kind name scope col state
+    local -a busy_foreign=()
+    for (( p=from; p<=to; p++ )); do
+      o="$(port_owner "$p")"
+      if [[ -z "$o" ]]; then
+        printf '  %-7s %s%-12s%s %s\n' "$p" "$GRN" "free" "$R" ""
+        continue
+      fi
+      IFS='|' read -r kind name scope <<<"$o"
+      case "$kind:$scope" in
+        container:managed) col="$C3"; state="ours" ;;
+        container:foreign) col="$YLW"; state="foreign"; busy_foreign+=("$name") ;;
+        *)                 col="$RED"; state="host proc" ;;
+      esac
+      printf '  %-7s %s%-12s%s %s\n' "$p" "$col" "$state" "$R" "$name"
+    done
+    printf '\n'
+    menu_item 1 "Scan a different range"
+    menu_item 2 "Free a port (remove the container holding it)"
+    printf '\n'; menu_item 0 "Back"; printf '\n'
+    case "$(ask "$(t choose)" "0")" in
+      1) local a b
+         a="$(ask "From port" "$from")"; b="$(ask "To port" "$to")"
+         [[ "$a" =~ ^[0-9]+$ ]] && from="$a"; [[ "$b" =~ ^[0-9]+$ ]] && to="$b"
+         (( to - from > 200 )) && { warn "Range too wide, capping at 200."; to=$(( from + 200 )); sleep 1; } ;;
+      2) local p2; p2="$(ask "Which port do you want free?" "")"
+         [[ "$p2" =~ ^[0-9]+$ ]] || { bad "$(t invalid)"; sleep 1; continue; }
+         local who; who="$(port_owner_text "$p2")"
+         if [[ -z "$who" ]]; then ok "Port $p2 is already free."; sleep 2; continue; fi
+         info "$p2 → $who"
+         local o2 kind2 name2 scope2; o2="$(port_owner "$p2")"
+         IFS='|' read -r kind2 name2 scope2 <<<"$o2"
+         if [[ "$kind2" != "container" ]]; then
+           bad "A host process holds it — stop that service yourself."; pause; continue
+         fi
+         confirm "Remove container '$name2'?" || continue
+         spin_run "Removing $name2" docker rm -f "$name2"
+         sleep 1 ;;
+      0|"") return ;;
+      *) bad "$(t invalid)"; sleep 1 ;;
+    esac
+  done
+}
+
 # =============================================================== telegram =====
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -2062,7 +2275,8 @@ main_menu() {
     menu_item 16 "$(t m_defaults)"
     menu_item 17 "${B}$(t m_telegram)${R}"
     menu_item 18 "$(t m_lang)"
-    menu_item 19 "$(t m_update)"
+    menu_item 19 "$(t m_ports)"
+    menu_item 20 "$(t m_update)"
     printf '\n'
     menu_item  0 "$(t m_quit)"
     printf '\n'
@@ -2073,7 +2287,7 @@ main_menu() {
       10) action_power ;;  11) action_delete ;;
       12) action_export ;; 13) action_wg ;;     14) action_healer ;;
       15) action_backup ;; 16) action_defaults ;; 17) action_telegram ;;
-      18) action_lang ;;    19) action_update ;;
+      18) action_lang ;;    19) action_ports ;;   20) action_update ;;
       0|q|Q) banner; printf '  %sBye.%s\n\n' "$GRN" "$R"; exit 0 ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -2130,6 +2344,7 @@ main() {
     --heal)    write_healer; bash "$HEALER_FILE"; ok "$(t done)" ;;
     --install) self_install ;;
     --update)  action_update ;;
+    --ports)   action_ports ;;
     --bot)     bot_installed || bot_install_files; exec "$BOT_FILE" ;;
     "")        main_menu ;;
     *)         usage; exit 1 ;;

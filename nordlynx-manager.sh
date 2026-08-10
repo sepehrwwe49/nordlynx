@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.4.1"
+VERSION="2.5.0"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -622,6 +622,13 @@ T_zh[stale_image]="镜像比脚本旧 — 请重新构建 (菜单第 3 项)。"
 T_fa[stale_image]="ایمیج قدیمی‌تر از اسکریپت است — دوباره بسازش (منوی ۳)."
 T_fs[stale_image]='.(۳ ﯼﻮﻨﻣ) ﺵﺯﺎﺴﺑ ﻩﺭﺎﺑﻭﺩ — ﺖﺳﺍ ﺖﭙﯾﺮﮑﺳﺍ ﺯﺍ ﺮﺗﯽﻤﯾﺪﻗ ﺞﯿﻤﯾﺍ'
 
+T_en[m_debug]="Diagnose a connection problem"
+T_fi[m_debug]="Eyb-yabi-ye moshkel-e ettesal"
+T_ru[m_debug]="Диагностика проблемы подключения"
+T_zh[m_debug]="诊断连接问题"
+T_fa[m_debug]="عیب‌یابی مشکل اتصال"
+T_fs[m_debug]='ﻝﺎﺼﺗﺍ ﻞﮑﺸﻣ ﯽﺑﺎﯾﺐﯿﻋ'
+
 t() { local k="$1" v=""
   case "$UI_LANG" in
     fi)     v="${T_fi[$k]:-}" ;;
@@ -1188,6 +1195,12 @@ RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc \
     && apt-get install -y --no-install-recommends nordvpn \
     && rm -rf /var/lib/apt/lists/*
 
+# --- iptables backend --------------------------------------------------------
+# Debian defaults to the nft backend; the NordVPN daemon expects legacy rules and
+# silently fails to build the tunnel when the two disagree inside a container.
+RUN update-alternatives --set iptables  /usr/sbin/iptables-legacy  || true \
+ && update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy || true
+
 # --- microsocks (tiny SOCKS5 server) -----------------------------------------
 RUN git clone --depth 1 https://github.com/rofl0r/microsocks /tmp/microsocks \
     && make -C /tmp/microsocks \
@@ -1369,6 +1382,11 @@ if [ "$CONNECTED" != "1" ]; then
   nordvpn settings 2>&1 | sed 's/^/      /'
   ip addr show 2>&1 | grep -E "nordlynx|tun" | sed 's/^/      /'
   [ -d /sys/module/wireguard ] || echo "      host is missing the wireguard kernel module"
+  echo "      --- nordvpn daemon log (last 30 lines) ---"
+  tail -n 30 /var/log/nordvpn/daemon.log 2>/dev/null | sed 's/^/      /' \
+    || echo "      (no daemon log at /var/log/nordvpn/daemon.log)"
+  echo "      --- iptables ---"
+  iptables -S 2>&1 | head -10 | sed 's/^/      /'
   echo "----------------------------------------------------------------------"
   die "Could not reach Connected state for ${COUNTRY}."
 fi
@@ -1501,7 +1519,10 @@ cfg_create() {   # builds the container described by CFG
       --restart unless-stopped \
       --cap-add=NET_ADMIN \
       --cap-add=NET_RAW \
+      --cap-add=SYS_MODULE \
       --device=/dev/net/tun \
+      -v /lib/modules:/lib/modules:ro \
+      -v /run/systemd/resolve:/run/systemd/resolve:ro \
       --sysctl net.ipv4.conf.all.src_valid_mark=1 \
       -p "${CFG[bind]}:${CFG[hport]}:${CFG[iport]}" \
       -e NORD_COUNTRY="${CFG[country]}" \
@@ -2164,6 +2185,80 @@ action_ports() {
   done
 }
 
+# ================================================================ diagnose ====
+# Spins up a throwaway container from the same image, drives NordVPN by hand and
+# dumps everything that matters. The token is read from the vault, never typed.
+action_debug() {
+  banner; title "$(t m_debug)"
+  have docker  || { bad "Docker missing."; pause; return; }
+  image_exists || { bad "$(t no_image)"; pause; return; }
+  token_ok     || { bad "$(t no_tokens)"; pause; return; }
+
+  local tkn; tkn="$(pick_token)" || { pause; return; }
+  local token; token="$(token_get "$tkn")"
+  local country; country="$(ask "Country to test with" "United_States")"
+  local name="nlm-debug"
+
+  printf '\n'
+  docker rm -f "$name" >/dev/null 2>&1
+  spin_run "Starting a debug container (no entrypoint)" \
+    docker run -d --name "$name" \
+      --cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=SYS_MODULE \
+      --device=/dev/net/tun \
+      -v /lib/modules:/lib/modules:ro \
+      --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+      -e NORD_TOKEN="$token" \
+      --entrypoint sleep "$IMAGE" infinity || { pause; return; }
+
+  local out
+  out="$(docker exec "$name" bash -c '
+    set -u
+    echo "== host kernel modules =="
+    [ -d /sys/module/wireguard ] && echo "wireguard: loaded" || echo "wireguard: MISSING"
+    [ -c /dev/net/tun ] && echo "tun device: present" || echo "tun device: MISSING"
+    echo "== iptables backend =="
+    iptables --version 2>&1
+    echo "== starting daemon =="
+    /etc/init.d/nordvpn start >/dev/null 2>&1
+    for i in $(seq 1 30); do
+      nordvpn status >/dev/null 2>&1 && break
+      sleep 2
+    done
+    nordvpn version 2>&1
+    echo "== consent + login =="
+    nordvpn consent deny </dev/null >/dev/null 2>&1
+    yes n | nordvpn set analytics off >/dev/null 2>&1
+    nordvpn login --token "$NORD_TOKEN" </dev/null 2>&1 | head -3
+    echo "== settings =="
+    nordvpn settings 2>&1
+    echo "== connect attempt =="
+    nordvpn set technology NordLynx 2>&1
+    nordvpn connect '"$country"' 2>&1
+    echo "== status =="
+    nordvpn status 2>&1
+    echo "== interfaces =="
+    ip -br addr 2>&1
+    echo "== routes =="
+    ip route 2>&1
+    echo "== iptables rules =="
+    iptables -S 2>&1 | head -20
+    echo "== daemon log (tail 40) =="
+    tail -n 40 /var/log/nordvpn/daemon.log 2>&1
+  ' 2>&1)"
+
+  local report="$APP_DIR/diagnose-$(date +%Y%m%d-%H%M%S).log"
+  printf '%s\n' "$out" | sed "s/${token}/<TOKEN-REDACTED>/g" >"$report"
+  chmod 600 "$report"
+
+  printf '\n'
+  sed 's/^/    /' "$report" | tail -n 70
+  printf '\n'
+  ok "Full report → $report"
+  warn "The report may contain your email — check before sharing it."
+  confirm "Remove the debug container?" && docker rm -f "$name" >/dev/null 2>&1
+  pause
+}
+
 # =============================================================== telegram =====
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -2407,7 +2502,8 @@ main_menu() {
     menu_item 17 "${B}$(t m_telegram)${R}"
     menu_item 18 "$(t m_lang)"
     menu_item 19 "$(t m_ports)"
-    menu_item 20 "$(t m_update)"
+    menu_item 20 "$(t m_debug)"
+    menu_item 21 "$(t m_update)"
     printf '\n'
     menu_item  0 "$(t m_quit)"
     printf '\n'
@@ -2418,7 +2514,8 @@ main_menu() {
       10) action_power ;;  11) action_delete ;;
       12) action_export ;; 13) action_wg ;;     14) action_healer ;;
       15) action_backup ;; 16) action_defaults ;; 17) action_telegram ;;
-      18) action_lang ;;    19) action_ports ;;   20) action_update ;;
+      18) action_lang ;;    19) action_ports ;;
+      20) action_debug ;;    21) action_update ;;
       0|q|Q) banner; printf '  %sBye.%s\n\n' "$GRN" "$R"; exit 0 ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -2476,6 +2573,7 @@ main() {
     --install) self_install ;;
     --update)  action_update ;;
     --ports)   action_ports ;;
+    --debug)   action_debug ;;
     --bot)     bot_installed || bot_install_files; exec "$BOT_FILE" ;;
     "")        main_menu ;;
     *)         usage; exit 1 ;;

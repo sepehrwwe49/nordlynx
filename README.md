@@ -362,6 +362,7 @@ sudo nordlynx --export        # regenerate outbounds.json
 sudo nordlynx --wg NAME       # print a location's WireGuard config
 sudo nordlynx --heal          # one watchdog pass
 sudo nordlynx --ports         # port map 1080–1100
+sudo nordlynx --debug         # spawn a throwaway container and dump full diagnostics
 sudo nordlynx --update        # pull the latest version from GitHub
 sudo nordlynx --bot           # run the Telegram bot in the foreground
 ```

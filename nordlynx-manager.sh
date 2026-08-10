@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.1.1"
+VERSION="2.2.0"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -22,6 +22,8 @@ TOKENS_FILE="$APP_DIR/tokens.tsv"     # vault: name<TAB>token
 TG_CONF="$APP_DIR/telegram.env"
 BOT_FILE="/usr/local/bin/nordlynx-bot.sh"
 BOT_STATE="$APP_DIR/bot-state"
+SRC_DIR="$APP_DIR/src"                # where the one-liner parks the real files
+REPO_RAW="https://raw.githubusercontent.com/sepehrwwe49/nordlynx/main"
 BACKUP_DIR="$APP_DIR/backups"
 EXPORT_DIR="$APP_DIR/exports"
 LOG_FILE="$APP_DIR/manager.log"
@@ -568,6 +570,13 @@ T_ru[tok_deleted]="Токен «%s» удалён."
 T_zh[tok_deleted]="令牌 “%s” 已删除。"
 T_fa[tok_deleted]="توکن «%s» حذف شد."
 T_fs[tok_deleted]='.ﺪﺷ ﻑﺬﺣ «%1$s» ﻦﮐﻮﺗ'
+
+T_en[m_update]="Update from GitHub"
+T_fi[m_update]="Update az GitHub"
+T_ru[m_update]="Обновить с GitHub"
+T_zh[m_update]="从 GitHub 更新"
+T_fa[m_update]="آپدیت از گیت‌هاب"
+T_fs[m_update]='ﺏﺎﻫﺖﯿﮔ ﺯﺍ ﺖﯾﺪﭘﺁ'
 
 t() { local k="$1" v=""
   case "$UI_LANG" in
@@ -1834,9 +1843,18 @@ bot_active()    { systemctl is-active --quiet nordlynx-bot 2>/dev/null; }
 
 bot_install_files() {
   local src="$SCRIPT_DIR/nordlynx-bot.sh"
-  [[ -f "$src" ]] || { bad "nordlynx-bot.sh not found next to this script ($SCRIPT_DIR)"; return 1; }
+  [[ -f "$src" ]] || src="$SRC_DIR/nordlynx-bot.sh"
+  if [[ ! -f "$src" ]]; then
+    spin_run "Downloading nordlynx-bot.sh from GitHub" fetch_sources || {
+      bad "nordlynx-bot.sh not found and could not be downloaded."; return 1; }
+    src="$SRC_DIR/nordlynx-bot.sh"
+  fi
   install -m 0700 "$src" "$BOT_FILE"
-  install -m 0755 "${BASH_SOURCE[0]}" /usr/local/bin/nordlynx
+  if [[ -f "${BASH_SOURCE[0]}" ]]; then
+    install -m 0755 "${BASH_SOURCE[0]}" /usr/local/bin/nordlynx
+  elif [[ -f "$SRC_DIR/nordlynx-manager.sh" ]]; then
+    install -m 0755 "$SRC_DIR/nordlynx-manager.sh" /usr/local/bin/nordlynx
+  fi
   cat >/etc/systemd/system/nordlynx-bot.service <<UNIT
 [Unit]
 Description=NordLynx Manager Telegram bot
@@ -1855,6 +1873,67 @@ WantedBy=multi-user.target
 UNIT
   systemctl daemon-reload
   return 0
+}
+
+# ========================================================== bootstrap/update ==
+# Running via  bash <(curl …)  means $0 is a pipe: no sibling files, nothing to
+# install from. In that case fetch the real files to $SRC_DIR and re-exec.
+running_from_pipe() {
+  local self="${BASH_SOURCE[0]}"
+  [[ -f "$self" ]] || return 0
+  case "$self" in /dev/fd/*|/proc/self/fd/*|/dev/std*) return 0 ;; esac
+  return 1
+}
+
+fetch_sources() {   # downloads manager + bot into $SRC_DIR
+  mkdir -p "$SRC_DIR"; chmod 700 "$APP_DIR" 2>/dev/null
+  local ok=1
+  curl -fsSL "$REPO_RAW/nordlynx-manager.sh" -o "$SRC_DIR/nordlynx-manager.sh.new" || ok=0
+  curl -fsSL "$REPO_RAW/nordlynx-bot.sh"     -o "$SRC_DIR/nordlynx-bot.sh.new"     || ok=0
+  (( ok )) || { rm -f "$SRC_DIR"/*.new; return 1; }
+  bash -n "$SRC_DIR/nordlynx-manager.sh.new" || { rm -f "$SRC_DIR"/*.new; return 1; }
+  bash -n "$SRC_DIR/nordlynx-bot.sh.new"     || { rm -f "$SRC_DIR"/*.new; return 1; }
+  mv "$SRC_DIR/nordlynx-manager.sh.new" "$SRC_DIR/nordlynx-manager.sh"
+  mv "$SRC_DIR/nordlynx-bot.sh.new"     "$SRC_DIR/nordlynx-bot.sh"
+  chmod 0755 "$SRC_DIR/nordlynx-manager.sh"; chmod 0700 "$SRC_DIR/nordlynx-bot.sh"
+  install -m 0755 "$SRC_DIR/nordlynx-manager.sh" /usr/local/bin/nordlynx
+  return 0
+}
+
+bootstrap() {
+  banner
+  info "Running from a pipe — installing a real copy first."
+  have curl || { apt-get update -qq >/dev/null 2>&1; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl >/dev/null 2>&1; }
+  if ! spin_run "Downloading nordlynx-manager.sh + nordlynx-bot.sh" fetch_sources; then
+    bad "Download failed. Check the server's network or GitHub reachability."
+    exit 1
+  fi
+  ok "Installed → $SRC_DIR"
+  ok "Command   → nordlynx   (just type: sudo nordlynx)"
+  sleep 2
+  NLM_BOOTSTRAPPED=1 exec "$SRC_DIR/nordlynx-manager.sh" "$@"
+}
+
+action_update() {
+  banner; title "$(t m_update)"
+  printf '\n  %sSource: %s%s\n\n' "$GRY" "$REPO_RAW" "$R"
+  info "current version: $VERSION"
+  if spin_run "Fetching the latest files" fetch_sources; then
+    local newv; newv="$(grep -m1 '^VERSION=' "$SRC_DIR/nordlynx-manager.sh" | cut -d'"' -f2)"
+    ok "installed version: $newv"
+    if [[ -x "$BOT_FILE" ]]; then
+      install -m 0700 "$SRC_DIR/nordlynx-bot.sh" "$BOT_FILE"
+      systemctl restart nordlynx-bot 2>/dev/null && ok "bot restarted"
+    fi
+    printf '\n'
+    if confirm "Restart the menu now to run the new version?"; then
+      exec "$SRC_DIR/nordlynx-manager.sh"
+    fi
+  else
+    bad "Update failed — GitHub unreachable, or the file has a syntax error."
+    warn "raw.githubusercontent.com caches for a few minutes after a push."
+  fi
+  pause
 }
 
 tg_api() {   # tg_api <method> [curl args…]
@@ -1983,6 +2062,7 @@ main_menu() {
     menu_item 16 "$(t m_defaults)"
     menu_item 17 "${B}$(t m_telegram)${R}"
     menu_item 18 "$(t m_lang)"
+    menu_item 19 "$(t m_update)"
     printf '\n'
     menu_item  0 "$(t m_quit)"
     printf '\n'
@@ -1993,7 +2073,7 @@ main_menu() {
       10) action_power ;;  11) action_delete ;;
       12) action_export ;; 13) action_wg ;;     14) action_healer ;;
       15) action_backup ;; 16) action_defaults ;; 17) action_telegram ;;
-      18) action_lang ;;
+      18) action_lang ;;    19) action_update ;;
       0|q|Q) banner; printf '  %sBye.%s\n\n' "$GRN" "$R"; exit 0 ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -2011,6 +2091,7 @@ $APP_NAME v$VERSION
   nordlynx-manager.sh --export        write Marzban/Pasarguard outbounds
   nordlynx-manager.sh --wg NAME       print the WireGuard config of a location
   nordlynx-manager.sh --heal          run one auto-heal pass
+  nordlynx-manager.sh --update        pull the latest version from GitHub
   nordlynx-manager.sh --bot           run the Telegram bot in the foreground
   nordlynx-manager.sh --install       copy itself to /usr/local/bin/nordlynx
   nordlynx-manager.sh --version|-v
@@ -2018,7 +2099,15 @@ $APP_NAME v$VERSION
 USAGE
 }
 
-self_install() { install -m 0755 "$0" /usr/local/bin/nordlynx && ok "Installed → /usr/local/bin/nordlynx"; }
+self_install() {
+  if [[ -f "${BASH_SOURCE[0]}" ]]; then
+    install -m 0755 "${BASH_SOURCE[0]}" /usr/local/bin/nordlynx
+  else
+    fetch_sources || { bad "Could not download the sources."; return 1; }
+  fi
+  [[ -f "$SRC_DIR/nordlynx-bot.sh" ]] || fetch_sources >/dev/null 2>&1
+  ok "Installed → /usr/local/bin/nordlynx  (run: sudo nordlynx)"
+}
 
 main() {
   case "${1:-}" in
@@ -2028,6 +2117,9 @@ main() {
   need_root
   mkdir -p "$APP_DIR"; chmod 700 "$APP_DIR"
   load_conf
+  if [[ "${NLM_BOOTSTRAPPED:-0}" != "1" ]] && running_from_pipe; then
+    bootstrap "$@"
+  fi
   case "${1:-}" in
     --list)    list_locations ;;
     --status)  action_status ;;
@@ -2037,6 +2129,7 @@ main() {
                wg_build_conf "$2" || { bad "Could not build a config for $2"; exit 1; } ;;
     --heal)    write_healer; bash "$HEALER_FILE"; ok "$(t done)" ;;
     --install) self_install ;;
+    --update)  action_update ;;
     --bot)     bot_installed || bot_install_files; exec "$BOT_FILE" ;;
     "")        main_menu ;;
     *)         usage; exit 1 ;;

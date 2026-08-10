@@ -77,6 +77,7 @@ Route per-domain, per-user or per-inbound however you like.
    16  Defaults for new locations
    17  Telegram bot (remote control)
    18  Language / Zaban / Язык / 语言
+   19  Update from GitHub
 
     0  Quit
 ```
@@ -238,11 +239,23 @@ chmod +x nordlynx-manager.sh
 sudo ./nordlynx-manager.sh
 ```
 
-One-liner:
+Or the one-liner — it bootstraps itself:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/sepehrwwe49/nordlynx/main/nordlynx-manager.sh)
 ```
+
+Run from a pipe, the script notices it has no file on disk, downloads
+`nordlynx-manager.sh` + `nordlynx-bot.sh` into `/opt/nordlynx-manager/src/`,
+syntax-checks both, links itself to `/usr/local/bin/nordlynx`, then re-execs. From
+then on you just run:
+
+```bash
+sudo nordlynx
+```
+
+Menu **19** (or `sudo nordlynx --update`) pulls the latest version from GitHub later,
+and restarts the Telegram bot service if it's installed.
 
 Put it on your `PATH`:
 
@@ -358,6 +371,7 @@ means a working VPN exit, never a silent leak to your server's real IP.
 | Wrong country IP | Recreate that location (menu 6); Nord occasionally lands on a neighbouring PoP |
 | `Port already in use` | `ss -lntp \| grep :1085` then remove the stale container |
 | Build fails on `apt` | Server DNS/network blocked — check `docker run --rm debian:bookworm-slim apt-get update` |
+| `unistd.h: No such file or directory` while compiling microsocks | Fixed in v2.1.1 — `gcc` only *recommends* `libc6-dev`, which `--no-install-recommends` skipped. Update the script and rerun menu 3 |
 
 ## Uninstall
 
@@ -406,11 +420,23 @@ chmod +x nordlynx-manager.sh
 sudo ./nordlynx-manager.sh
 ```
 
-یا تک‌خطی:
+یا تک‌خطی (خودش خودش را نصب می‌کند):
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/sepehrwwe49/nordlynx/main/nordlynx-manager.sh)
 ```
+
+وقتی از روی pipe اجرا شود، تشخیص می‌دهد که فایلی روی دیسک ندارد، هر دو فایل
+(`nordlynx-manager.sh` و `nordlynx-bot.sh`) را در `/opt/nordlynx-manager/src/` دانلود
+می‌کند، سینتکس هر دو را چک می‌کند، خودش را به `/usr/local/bin/nordlynx` لینک می‌کند و
+دوباره اجرا می‌شود. از آن به بعد فقط کافی است بزنی:
+
+```bash
+sudo nordlynx
+```
+
+گزینه **۱۹** (یا `sudo nordlynx --update`) نسخه جدید را از گیت‌هاب می‌گیرد و اگر ربات
+تلگرام نصب باشد آن را هم ری‌استارت می‌کند.
 
 ### زبان و نمایش درست فارسی
 

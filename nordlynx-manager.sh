@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.1.0"
+VERSION="2.1.1"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -1018,7 +1018,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl gnupg iproute2 iputils-ping procps \
-        libcap2-bin sysvinit-utils net-tools gcc make git \
+        libcap2-bin sysvinit-utils net-tools \
+        gcc make git libc6-dev \
         wireguard-tools iptables openvpn \
     && rm -rf /var/lib/apt/lists/*
 
@@ -1037,8 +1038,10 @@ RUN git clone --depth 1 https://github.com/rofl0r/microsocks /tmp/microsocks \
     && install -m 0755 /tmp/microsocks/microsocks /usr/local/bin/microsocks \
     && rm -rf /tmp/microsocks
 
+# NORD_TOKEN is deliberately NOT declared here — it is passed at runtime only,
+# so it never gets baked into an image layer.
 ENV NORD_COUNTRY=United_States \
-    NORD_TOKEN="" \
+    NORD_CITY="" \
     NORD_TECH=NordLynx \
     NORD_PROTO=UDP \
     NORD_AUTOCONNECT=on \

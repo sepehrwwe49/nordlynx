@@ -399,6 +399,7 @@ means a working VPN exit, never a silent leak to your server's real IP.
 | `Couldn't find /run/nordvpn/nordvpnd.sock` | Container needs `--cap-add=NET_ADMIN` + `/dev/net/tun` — rerun menu option 1 |
 | Login failed | Token expired/wrong — regenerate, menu option 2, then recreate containers |
 | Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one — with no TTY in a container it just hangs. v2.3.2 answers it non-interactively before logging in |
+| Updated the script but the container log looks unchanged | The entrypoint is baked **into the image**. Run menu 3 to rebuild, then recreate the containers. Since v2.3.3 the script detects this itself and offers the rebuild — the health line shows `image ▲` when the image is older than the script |
 | Stuck on `Disconnected` | Country name must match Nord's spelling with underscores: `United_Arab_Emirates` |
 | Wrong country IP | Recreate that location (menu 6); Nord occasionally lands on a neighbouring PoP |
 | `Port already in use` | `ss -lntp \| grep :1085` then remove the stale container |

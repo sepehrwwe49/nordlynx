@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.3.2"
+VERSION="2.3.3"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -615,6 +615,13 @@ T_zh[p_skip]="跳过此节点"
 T_fa[p_skip]="از این لوکیشن بگذر"
 T_fs[p_skip]='ﺭﺬﮕﺑ ﻦﺸﯿﮐﻮﻟ ﻦﯾﺍ ﺯﺍ'
 
+T_en[stale_image]="The image is older than this script — rebuild it (menu 3)."
+T_fi[stale_image]="Image ghadimi-tar az script ast — dobare besaz (menu 3)."
+T_ru[stale_image]="Образ старее скрипта — пересоберите его (пункт 3)."
+T_zh[stale_image]="镜像比脚本旧 — 请重新构建 (菜单第 3 项)。"
+T_fa[stale_image]="ایمیج قدیمی‌تر از اسکریپت است — دوباره بسازش (منوی ۳)."
+T_fs[stale_image]='.(۳ ﯼﻮﻨﻣ) ﺵﺯﺎﺴﺑ ﻩﺭﺎﺑﻭﺩ — ﺖﺳﺍ ﺖﭙﯾﺮﮑﺳﺍ ﺯﺍ ﺮﺗﯽﻤﯾﺪﻗ ﺞﯿﻤﯾﺍ'
+
 t() { local k="$1" v=""
   case "$UI_LANG" in
     fi)     v="${T_fi[$k]:-}" ;;
@@ -815,6 +822,23 @@ pick_token() {          # echoes the chosen token NAME
   printf '%s' "${names[$(( sel - 1 ))]}"
 }
 image_exists() { docker image inspect "$IMAGE" >/dev/null 2>&1; }
+
+# The entrypoint is baked INTO the image, so updating this script alone changes
+# nothing until the image is rebuilt. These helpers detect exactly that.
+entrypoint_sha() {
+  write_build_files >/dev/null 2>&1
+  sha256sum "$BUILD_DIR/entrypoint.sh" 2>/dev/null | cut -c1-12
+}
+image_entrypoint_sha() {
+  docker image inspect "$IMAGE" --format "{{index .Config.Labels \"${LABEL_NS}.entrypoint\"}}" 2>/dev/null
+}
+image_stale() {
+  image_exists || return 1
+  local want have
+  want="$(entrypoint_sha)"; have="$(image_entrypoint_sha)"
+  [[ -z "$want" ]] && return 1
+  [[ "$have" != "$want" ]]
+}
 
 port_in_use() {
   local p="$1"
@@ -1315,7 +1339,8 @@ action_build() {
   step "Building image  ($IMAGE)"
   printf '  %sDebian + NordVPN CLI + OpenVPN + wireguard-tools + microsocks.%s\n' "$GRY" "$R"
   printf '  %sFirst build takes a few minutes.%s\n\n' "$GRY" "$R"
-  if docker build --pull -t "$IMAGE" "$BUILD_DIR" 2>&1 | sed 's/^/    /'; then
+  local ep_sha; ep_sha="$(entrypoint_sha)"
+  if docker build --pull -t "$IMAGE" --label "${LABEL_NS}.entrypoint=$ep_sha" "$BUILD_DIR" 2>&1 | sed 's/^/    /'; then
     printf '\n'; ok "Image built: $IMAGE"; log "image built"
   else
     printf '\n'; bad "Build failed. Scroll up for the error."
@@ -1454,6 +1479,16 @@ cfg_create() {   # builds the container described by CFG
 preflight() {
   token_ok  || { bad "$(t no_token)"; pause; return 1; }
   image_exists || { bad "$(t no_image)"; pause; return 1; }
+  if image_stale; then
+    printf '\n'
+    warn "$(t stale_image)"
+    printf '  %sThe entrypoint lives inside the image — a script update alone changes nothing.%s\n\n' "$GRY" "$R"
+    if confirm "Rebuild the image now?"; then
+      action_build
+    else
+      confirm "Continue with the old image anyway?" || return 1
+    fi
+  fi
   return 0
 }
 
@@ -2241,6 +2276,7 @@ health_line() {
   local locs; locs="$(loc_count)"
   local tk="$RED✘$R"; token_ok && tk="$GRN✔$R"
   local im="$RED✘$R"; image_exists && im="$GRN✔$R"
+  image_stale && im="$YLW▲$R"
   local dk="$RED✘$R"; docker info >/dev/null 2>&1 && dk="$GRN✔$R"
   local hl="$GRY○$R"; healer_installed && hl="$GRN●$R"
   printf '  %sdocker%s %s   %stoken%s %s   %simage%s %s   %slocations%s %s%s%s   %swatchdog%s %s   %sdefault%s %s%s/%s%s\n\n' \

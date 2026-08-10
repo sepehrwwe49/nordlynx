@@ -1,0 +1,14 @@
+# never commit credentials or generated state
+.token
+*.token
+token
+config.env
+outbounds.json
+routing-rules.json
+manager.log
+healer.log
+backups/
+build/
+*.tar.gz
+*.tsv
+.env

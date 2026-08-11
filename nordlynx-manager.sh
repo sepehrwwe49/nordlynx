@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.9.3"
+VERSION="3.0.0"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -677,6 +677,19 @@ T_zh[m_probe]="探测某国家可用的协议 (NordLynx / OpenVPN)"
 T_fa[m_probe]="تست پروتکل‌ها برای یک کشور (NordLynx / OpenVPN)"
 T_fs[m_probe]='(NordLynx / OpenVPN) ﺭﻮﺸﮐ ﮏﯾ ﯼﺍﺮﺑ ﺎﻫﻞﮑﺗﻭﺮﭘ ﺖﺴﺗ'
 
+T_en[sess_warn]="Each container is one NordVPN device. Removing it without logging out keeps the slot busy — the script logs out for you."
+T_fi[sess_warn]="Har container yek device-e Nord ast. Hazf bedoon-e logout slot ra eshghal negah midarad — script khodesh logout mikonad."
+T_ru[sess_warn]="Каждый контейнер — это одно устройство NordVPN. Удаление без выхода занимает слот — скрипт выходит за вас."
+T_zh[sess_warn]="每个容器算一台 NordVPN 设备。不登出就删除会一直占用名额 — 脚本会替你登出。"
+T_fa[sess_warn]="هر کانتینر یک دستگاه نورد است. حذف بدون logout سهمیه را اشغال نگه می‌دارد — اسکریپت خودش logout می‌کند."
+T_fs[sess_warn]='.ﺪﻨﮐﯽﻣ logout ﺵﺩﻮﺧ ﺖﭙﯾﺮﮑﺳﺍ — ﺩﺭﺍﺩﯽﻣ ﻪﮕﻧ ﻝﺎﻐﺷﺍ ﺍﺭ ﻪﯿﻤﻬﺳ logout ﻥﻭﺪﺑ ﻑﺬﺣ .ﺖﺳﺍ ﺩﺭﻮﻧ ﻩﺎﮕﺘﺳﺩ ﮏﯾ ﺮﻨﯿﺘﻧﺎﮐ ﺮﻫ'
+T_en[sess_limit]="Device limit reached? NordVPN allows 6-10 simultaneous devices. Free some with menu 20, or add a second token in menu 2."
+T_fi[sess_limit]="Sahmiye por shode? Nord 6 ta 10 device-e hamzaman midahad. Ba menu 20 azad kon ya token-e dovom ezafe kon (menu 2)."
+T_ru[sess_limit]="Достигнут лимит устройств? NordVPN разрешает 6-10 одновременно. Освободите через пункт 20 или добавьте второй токен (пункт 2)."
+T_zh[sess_limit]="达到设备上限？NordVPN 允许 6-10 台同时在线。用菜单 20 释放，或在菜单 2 添加第二个令牌。"
+T_fa[sess_limit]="سهمیه پر شده؟ نورد ۶ تا ۱۰ دستگاه هم‌زمان می‌دهد. با منوی ۲۰ آزاد کن یا در منوی ۲ توکن دوم اضافه کن."
+T_fs[sess_limit]='.ﻦﮐ ﻪﻓﺎﺿﺍ ﻡﻭﺩ ﻦﮐﻮﺗ ۲ ﯼﻮﻨﻣ ﺭﺩ ﺎﯾ ﻦﮐ ﺩﺍﺯﺁ ۲۰ ﯼﻮﻨﻣ ﺎﺑ .ﺪﻫﺩﯽﻣ ﻥﺎﻣﺯﻢﻫ ﻩﺎﮕﺘﺳﺩ ۱۰ ﺎﺗ ۶ ﺩﺭﻮﻧ ؟ﻩﺪﺷ ﺮﭘ ﻪﯿﻤﻬﺳ'
+
 t() { local k="$1" v=""
   case "$UI_LANG" in
     fi)     v="${T_fi[$k]:-}" ;;
@@ -953,8 +966,21 @@ unmount_leftovers() {   # unmount_leftovers [container-id]
   printf '%s' "$n"
 }
 
+# A running container holds one NordVPN "device" slot. docker rm does NOT free
+# it — the daemon must log out first, or new containers start failing to connect
+# with a generic "We couldn't connect you to the VPN".
+release_session() {   # release_session <container>
+  local n="$1"
+  docker ps --format '{{.Names}}' | grep -qx "$n" || return 0
+  timeout 20 docker exec "$n" nordvpn disconnect            >/dev/null 2>&1
+  timeout 20 docker exec "$n" nordvpn logout --persist-token >/dev/null 2>&1 \
+    || timeout 20 docker exec "$n" nordvpn logout           >/dev/null 2>&1
+  return 0
+}
+
 force_remove() {   # force_remove <name-or-id>
   local name="$1" id out freed
+  release_session "$name"
   docker rm -f "$name" >/dev/null 2>&1 && return 0
 
   docker stop -t 3 "$name" >/dev/null 2>&1
@@ -1532,6 +1558,8 @@ if [ "$CONNECTED" != "1" ]; then
   nordvpn settings 2>&1 | sed 's/^/      /'
   ip addr show 2>&1 | grep -E "nordlynx|tun" | sed 's/^/      /'
   [ -d /sys/module/wireguard ] || echo "      host is missing the wireguard kernel module"
+  echo "      NOTE: every container counts as one NordVPN device (limit 6-10)."
+  echo "      If other containers are connected, this one may be over the quota."
   echo "      --- nordvpn daemon log (last 30 lines) ---"
   tail -n 30 /var/log/nordvpn/daemon.log 2>/dev/null | sed 's/^/      /' \
     || echo "      (no daemon log at /var/log/nordvpn/daemon.log)"
@@ -1659,6 +1687,7 @@ wait_connected() {
     sleep 2; i=$(( i + 2 ))
   done
   printf '\n'; bad "$(t timeout)"
+  warn "$(t sess_limit)"
   printf '\n  %s─── last 25 log lines of %s ───%s\n' "$C1" "$name" "$R"
   docker logs --tail 25 "$name" 2>&1 | sed 's/^/    /'
   printf '\n'
@@ -2473,6 +2502,7 @@ action_cleanup() {
   printf '\n'
   if (( ${#doomed[@]} == 0 )); then ok "Nothing to clean up."; pause; return; fi
   warn "${#doomed[@]} container(s) will be removed. Running ones on a unique port are kept."
+  info "$(t sess_warn)"
   confirm "Remove them now?" || { warn "$(t cancelled)"; pause; return; }
   local x fails=0
   for x in "${doomed[@]}"; do
@@ -2665,6 +2695,7 @@ action_probe() {
     fi
   done
 
+  release_session "$name"
   docker rm -f "$name" >/dev/null 2>&1
 
   printf '\n'
@@ -2771,7 +2802,7 @@ action_debug() {
   printf '\n'
   ok "Full report → $report"
   warn "The report may contain your email — check before sharing it."
-  confirm "Remove the debug container?" && docker rm -f "$name" >/dev/null 2>&1
+  confirm "Remove the debug container?" && { release_session "$name"; docker rm -f "$name" >/dev/null 2>&1; }
   pause
 }
 

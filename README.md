@@ -461,6 +461,34 @@ NordVPN will then fail to connect on current versions.
 > Run it on a machine where that is acceptable, and keep the SOCKS ports bound to
 > `127.0.0.1`.
 
+## One container = one NordVPN device
+
+NordVPN allows a limited number of **simultaneous devices** (6 on older plans, 10 on
+current ones). Every container counts as one. `docker rm` does **not** free the slot —
+the daemon has to log out first. Once the quota is full, new containers still log in
+fine but every connect attempt fails with the generic:
+
+```
+We couldn't connect you to the VPN. Please check your internet connection…
+```
+
+…and the daemon log only says `context deadline exceeded`. Nothing hints at the quota.
+
+Since v3.0.0 the script logs out inside the container before removing it, so slots are
+returned automatically. If you ever get stuck anyway:
+
+```bash
+for c in $(docker ps -aq --filter label=nlm.managed=1); do
+  docker exec "$c" nordvpn disconnect 2>/dev/null
+  docker exec "$c" nordvpn logout --persist-token 2>/dev/null
+done
+```
+
+Wait a couple of minutes for the sessions to expire server-side, then try again.
+
+**Want more locations than your plan allows?** Add a second Nord account's token in
+menu 2 and pick it when building — that is exactly what the named token vault is for.
+
 ## Security
 
 - The access token is a credential. Stored at `/opt/nordlynx-manager/.token` (0600) and in each
@@ -478,6 +506,7 @@ NordVPN will then fail to connect on current versions.
 | Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one. It only accepts the full words `yes`/`no` — `y`/`n` loop forever on `Invalid response`. v2.5.2 answers it correctly before logging in |
 | `We couldn't reach System Daemon` | The daemon socket appears before the daemon can answer. v2.4.0 polls until it really responds, and restarts the service once if it doesn't |
 | `We couldn't connect you to the VPN` and the daemon log says `nft failed with: exec: "nft": executable file not found` | The NordVPN 5.x daemon builds its firewall rules with **nftables**, so the `nft` binary must exist in the image. Fixed in v2.5.1 — rebuild the image (menu 3) |
+| Some locations connect, newly built ones always fail with the generic "couldn't connect", daemon log says `context deadline exceeded` | The account's simultaneous-device quota is full — every container is one device and `docker rm` doesn't free it. See [One container = one NordVPN device](#one-container--one-nordvpn-device) |
 | Log shows `Connecting to NordVPN is already in progress.` and the location never comes up | Auto-connect was armed before our own connect, so the daemon and the script fought over the tunnel — and the retry loop's `disconnect` killed the daemon's attempt. Fixed in v2.8.1: auto-connect is armed only after a successful connect, and an in-flight attempt is never interrupted |
 | `We couldn't connect you to the VPN`, daemon log says `sysctl: permission denied on key "net.ipv6.conf.all.disable_ipv6"` | Docker mounts `/proc/sys` read-only. Fixed in v2.6.0 — containers now run with `--privileged`. Rebuild and recreate |
 | `We couldn't connect you to the VPN` on NordLynx | The **host** kernel needs the `wireguard` module — a container cannot provide it. Menu 1 installs and loads it. If your VPS kernel has no WireGuard support, containers automatically fall back to OpenVPN (v2.4.0) |

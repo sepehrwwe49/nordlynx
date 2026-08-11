@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.9.2"
+VERSION="2.9.3"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -2559,17 +2559,25 @@ probe_country() {   # sets PROBE_SECS / PROBE_REASON; returns 0 on success
   local c="$1" country="$2" tech="$3" proto="$4" t0 out try
   PROBE_REASON=""
   docker exec "$c" nordvpn disconnect >/dev/null 2>&1
-  if ! docker exec "$c" nordvpn set technology "$tech" >/dev/null 2>&1; then
-    PROBE_REASON="cannot select $tech"; return 1
-  fi
+
+  # The CLI exits non-zero for "X is already set to Y", which is not an error.
+  nord_set() {   # nord_set <container> <setting> <value>
+    local o; o="$(docker exec "$1" nordvpn set "$2" "$3" 2>&1)"
+    grep -qiE 'successfully set|already set' <<<"$o" && return 0
+    PROBE_REASON="$(printf '%s' "$o" | tr -d '\r' | tail -1 | cut -c1-60)"
+    return 1
+  }
+
+  nord_set "$c" technology "$tech" || return 1
   if [[ "$tech" == "OpenVPN" ]]; then
-    docker exec "$c" nordvpn set protocol "$proto" >/dev/null 2>&1 \
-      || { PROBE_REASON="cannot select $proto"; return 1; }
+    nord_set "$c" protocol "$proto" || return 1
   fi
   # two attempts: NordVPN hands out a different server each time
+  local limit=90
+  [[ "$tech" == "OpenVPN" ]] && limit=150
   for try in 1 2; do
     t0=$SECONDS
-    out="$(docker exec "$c" timeout 75 nordvpn connect "$country" 2>&1)"
+    out="$(docker exec "$c" timeout "$limit" nordvpn connect "$country" 2>&1)"
     if grep -qi 'You are connected' <<<"$out"; then
       PROBE_SECS="$(( SECONDS - t0 ))"
       return 0
@@ -2645,7 +2653,8 @@ action_probe() {
   local combo tech proto secs
   for combo in "${combos[@]}"; do
     IFS='|' read -r tech proto <<<"$combo"
-    printf '  %-24s %s…testing%s' "$tech / $proto" "$YLW" "$R"
+    printf '  %-24s %s…testing (up to %ss)%s' "$tech / $proto" "$YLW" \
+      "$( [[ "$tech" == "OpenVPN" ]] && printf 300 || printf 180 )" "$R"
     if probe_country "$name" "$country" "$tech" "$proto"; then
       secs="$PROBE_SECS"
       printf '\r  %-24s %s%-10s%s %ss\033[K\n' "$tech / $proto" "$GRN" "works" "$R" "$secs"

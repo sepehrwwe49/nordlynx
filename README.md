@@ -362,6 +362,7 @@ sudo nordlynx --export        # regenerate outbounds.json
 sudo nordlynx --wg NAME       # print a location's WireGuard config
 sudo nordlynx --heal          # one watchdog pass
 sudo nordlynx --ports         # port map 1080–1100
+sudo nordlynx --cleanup       # remove dead / duplicate containers
 sudo nordlynx --debug         # spawn a throwaway container and dump full diagnostics
 sudo nordlynx --update        # pull the latest version from GitHub
 sudo nordlynx --bot           # run the Telegram bot in the foreground
@@ -450,6 +451,8 @@ NordVPN will then fail to connect on current versions.
 | Build fails on `apt` | Server DNS/network blocked — check `docker run --rm debian:bookworm-slim apt-get update` |
 | `unistd.h: No such file or directory` while compiling microsocks | Fixed in v2.1.1 — `gcc` only *recommends* `libc6-dev`, which `--no-install-recommends` skipped. Update the script and rerun menu 3 |
 | Stuck on "Waiting for VPN tunnel" then timeout | v2.2.1 adds the flags WireGuard needs in a container (`NET_RAW`, `src_valid_mark=1`) and turns Nord's own firewall/killswitch off. Update, delete the stuck container, rebuild. The timeout now prints the container log automatically |
+| `unable to remove filesystem: unlinkat …/resolv.conf: operation not permitted`, containers stuck in `Dead` | The NordVPN client sets the **immutable** flag (`chattr +i`) on `resolv.conf` to protect its DNS. If the container dies with the flag set, Docker can't unlink the file. v2.7.2 clears it automatically (menu 20). Manually: `chattr -i /var/lib/docker/containers/*/resolv.conf` |
+| Several containers on the same port, some `dead`/`exited` | A dead container doesn't listen, so the port looks free and a duplicate gets built. v2.7.0 removes the old one first and menu 20 cleans up whatever is left |
 | Port already busy | v2.3.0 shows who holds it and offers to free it, use the next free port, type another, or skip. Menu 19 maps ports 1080–1100 |
 
 ## Uninstall

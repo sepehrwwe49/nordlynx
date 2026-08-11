@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.6.1"
+VERSION="2.7.2"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -649,6 +649,13 @@ T_zh[priv_risk]="特权容器可以访问宿主机内核，只运行你信任的
 T_fa[priv_risk]="کانتینر privileged به کرنل هاست دسترسی دارد. فقط ایمیج مورد اعتماد اجرا کن."
 T_fs[priv_risk]='.ﻦﮐ ﺍﺮﺟﺍ ﺩﺎﻤﺘﻋﺍ ﺩﺭﻮﻣ ﺞﯿﻤﯾﺍ ﻂﻘﻓ .ﺩﺭﺍﺩ ﯽﺳﺮﺘﺳﺩ ﺖﺳﺎﻫ ﻞﻧﺮﮐ ﻪﺑ privileged ﺮﻨﯿﺘﻧﺎﮐ'
 
+T_en[m_cleanup]="Clean up dead / duplicate containers"
+T_fi[m_cleanup]="Pak kardan-e container-haye dead / tekrari"
+T_ru[m_cleanup]="Очистка мёртвых / дублирующих контейнеров"
+T_zh[m_cleanup]="清理无效 / 重复的容器"
+T_fa[m_cleanup]="پاکسازی کانتینرهای مرده / تکراری"
+T_fs[m_cleanup]='ﯼﺭﺍﺮﮑﺗ / ﻩﺩﺮﻣ ﯼﺎﻫﺮﻨﯿﺘﻧﺎﮐ ﯼﺯﺎﺴﮐﺎﭘ'
+
 t() { local k="$1" v=""
   case "$UI_LANG" in
     fi)     v="${T_fi[$k]:-}" ;;
@@ -883,6 +890,76 @@ list_locations() {
 }
 loc_count() { list_locations | grep -c . ; }
 
+non_running_count() {
+  local n c p b st rest count=0
+  while IFS=$'\t' read -r n c p b st rest; do
+    [[ -z "$n" ]] && continue
+    [[ "$st" != "running" ]] && count=$(( count + 1 ))
+  done < <(list_locations)
+  printf '%s' "$count"
+}
+
+# Inside a privileged container the NordVPN daemon bind-mounts /etc/resolv.conf.
+# That mount leaks into the host namespace, so Docker can no longer unlink
+# /var/lib/docker/containers/<id>/resolv.conf and the container is stuck "Dead".
+# Unmounting the leftovers makes it removable again.
+# The NordVPN client marks resolv.conf immutable (chattr +i) so nothing can
+# rewrite its DNS. If the container dies while the flag is set, Docker cannot
+# unlink the file and the container is stuck "Dead" with:
+#   unable to remove filesystem: unlinkat …/resolv.conf: operation not permitted
+unlock_container_files() {   # unlock_container_files [container-id]
+  local id="${1:-}" base="/var/lib/docker/containers" d n=0 f
+  have chattr || return 0
+  for d in "$base"/*; do
+    [[ -d "$d" ]] || continue
+    [[ -n "$id" && "$d" != *"$id"* ]] && continue
+    for f in resolv.conf hostname hosts; do
+      [[ -e "$d/$f" ]] || continue
+      if lsattr -d "$d/$f" 2>/dev/null | grep -q 'i'; then
+        chattr -i "$d/$f" 2>/dev/null && n=$(( n + 1 ))
+      fi
+    done
+  done
+  printf '%s' "$n"
+}
+
+unmount_leftovers() {   # unmount_leftovers [container-id]
+  local id="${1:-}" m n=0
+  while read -r m; do
+    [[ -n "$id" && "$m" != *"$id"* ]] && continue
+    umount -l "$m" 2>/dev/null && n=$(( n + 1 ))
+  done < <(grep -o '/var/lib/docker/containers/[a-f0-9]*/[a-z.]*' /proc/mounts 2>/dev/null | sort -u)
+  printf '%s' "$n"
+}
+
+force_remove() {   # force_remove <name-or-id>
+  local name="$1" id out freed
+  docker rm -f "$name" >/dev/null 2>&1 && return 0
+
+  docker stop -t 3 "$name" >/dev/null 2>&1
+  sleep 2
+  docker rm -f "$name" >/dev/null 2>&1 && return 0
+
+  # stuck: clear the immutable flag and any leaked mounts, then retry
+  id="$(docker inspect "$name" --format '{{.Id}}' 2>/dev/null)"
+  freed="$(unlock_container_files "$id")"
+  [[ "$freed" != "0" ]] && info "cleared the immutable flag on $freed file(s)"
+  freed="$(unmount_leftovers "$id")"
+  [[ "$freed" != "0" ]] && info "released $freed stuck mount(s)"
+  docker rm -f "$name" >/dev/null 2>&1 && return 0
+
+  # last resort: sweep every container directory, not just this one
+  unlock_container_files >/dev/null
+  unmount_leftovers >/dev/null
+  docker rm -f "$name" >/dev/null 2>&1 && return 0
+
+  out="$(docker rm -f "$name" 2>&1)"
+  bad "Could not remove $name"
+  printf '      %s\n' "$out"
+  warn "Try:  systemctl restart docker   then run menu 20 again."
+  return 1
+}
+
 # name of the managed container published on a given host port ("" if none)
 container_on_port() {
   local want="$1" n c p rest
@@ -947,7 +1024,7 @@ resolve_port() {
            if [[ "$scope" == "foreign" ]]; then
              confirm "Remove foreign container '$name'? This is NOT one of ours." >&2 || continue
            fi
-           spin_run "Removing $name" docker rm -f "$name" >&2
+           spin_run "Removing $name" force_remove "$name" >&2
            sleep 1
          fi ;;
       2) want="$(next_free_port)" ;;
@@ -1063,7 +1140,7 @@ action_deps() {
   spin_run "apt-get update" apt-get update -qq
   spin_run "Installing base tools (curl, jq, iproute2, qrencode)" \
     env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-      curl jq iproute2 ca-certificates gnupg lsb-release procps qrencode
+      curl jq iproute2 ca-certificates gnupg lsb-release procps qrencode e2fsprogs
 
   step "Docker"
   if have docker; then
@@ -1559,6 +1636,14 @@ cfg_create() {   # builds the container described by CFG
     warn "Privileged mode is off — NordVPN will most likely fail to connect."
   fi
 
+  # A dead/exited container still owns the port in our records but does not
+  # listen, so port_in_use() cannot see it. Clear it out before building.
+  local dup; dup="$(container_on_port "${CFG[hport]}" || true)"
+  if [[ -n "$dup" && "$dup" != "$name" ]]; then
+    info "Removing the old container on port ${CFG[hport]}: $dup"
+    force_remove "$dup" || return 1
+  fi
+
   local token; token="$(token_get "${CFG[token]}")"
   [[ -z "$token" ]] && { bad "Token not found in the vault: ${CFG[token]}"; return 1; }
   if docker run -d \
@@ -1755,7 +1840,7 @@ action_batch() {
         c="${item%%:*}"; p="${item##*:}"
         printf '\n  %s─── retry %s ───%s\n' "$C1" "$c" "$R"
         local stale; stale="$(container_on_port "$p" || true)"
-        [[ -n "$stale" ]] && docker rm -f "$stale" >/dev/null 2>&1
+        [[ -n "$stale" ]] && force_remove "$stale" >/dev/null 2>&1
         cfg_reset
         CFG[country]="$c"; CFG[hport]="$p"; CFG[bind]="$bind"
         CFG[tech]="$tech"; CFG[proto]="$proto"; CFG[token]="$tkn"
@@ -1827,7 +1912,7 @@ action_settings() {
       a|A)
          if (( ! dirty )); then info "Nothing changed."; sleep 1; continue; fi
          printf '\n'; confirm "$(t applying)?" || continue
-         spin_run "Removing old container" docker rm -f "$name"
+         spin_run "Removing old container" force_remove "$name"
          cfg_create
          log "settings applied to $name"
          pause; return ;;
@@ -1965,7 +2050,7 @@ action_delete() {
   printf '\n'
   local q; q="$(printf "$(t confirm_del)" "$name")"
   confirm "$q" || { warn "$(t cancelled)"; pause; return; }
-  spin_run "Removing $name" docker rm -f "$name"
+  spin_run "Removing $name" force_remove "$name"
   log "deleted $name"
   pause
 }
@@ -2226,6 +2311,59 @@ action_lang() {
   done
 }
 
+# ================================================================ cleanup =====
+action_cleanup() {
+  banner; title "$(t m_cleanup)"
+  local rows; rows="$(list_locations)"
+  if [[ -z "$rows" ]]; then printf '\n'; warn "$(t no_loc)"; pause; return; fi
+
+  local -a doomed=()
+  local n c p b st tech proto ipn tokn city
+  local -A seen=()
+
+  printf '\n  %s%-30s %-22s %-7s %-9s %s%s\n' "$B$GRY" "CONTAINER" "COUNTRY" "PORT" "STATE" "VERDICT" "$R"
+  printf '  %s%s%s\n' "$GRY" "$(printf '─%.0s' $(seq 1 88))" "$R"
+  while IFS=$'\t' read -r n c p b st tech proto ipn tokn city; do
+    [[ -z "$n" ]] && continue
+    local verdict="keep" col="$GRN"
+    if [[ "$st" != "running" ]]; then
+      verdict="dead/stopped → remove"; col="$RED"; doomed+=("$n")
+    elif [[ -n "${seen[$p]:-}" ]]; then
+      verdict="duplicate port → remove"; col="$YLW"; doomed+=("$n")
+    else
+      seen[$p]="$n"
+    fi
+    printf '  %-30s %-22s %-7s %-9s %s%s%s\n' "$n" "$c" "$p" "$st" "$col" "$verdict" "$R"
+  done <<<"$rows"
+
+  printf '\n'
+  if (( ${#doomed[@]} == 0 )); then ok "Nothing to clean up."; pause; return; fi
+  warn "${#doomed[@]} container(s) will be removed. Running ones on a unique port are kept."
+  confirm "Remove them now?" || { warn "$(t cancelled)"; pause; return; }
+  local x fails=0
+  for x in "${doomed[@]}"; do
+    spin_run "Removing $x" force_remove "$x" || fails=$(( fails + 1 ))
+  done
+  printf '\n'
+  if (( fails > 0 )); then
+    bad "$fails container(s) refused to go."
+    local freed
+    freed="$(unlock_container_files)"
+    [[ "$freed" != "0" ]] && info "cleared the immutable flag on $freed file(s) — retrying"
+    freed="$(unmount_leftovers)"
+    [[ "$freed" != "0" ]] && info "released $freed stuck mount(s) — retrying"
+    for x in "${doomed[@]}"; do docker rm -f "$x" >/dev/null 2>&1; done
+    if [[ "$(non_running_count)" == "0" ]]; then
+      ok "$(t done)"
+    else
+      warn "Still stuck. Run:  systemctl restart docker   then menu 20 again."
+    fi
+  else
+    ok "$(t done)"
+  fi
+  pause
+}
+
 # =============================================================== port map =====
 action_ports() {
   while true; do
@@ -2269,7 +2407,7 @@ action_ports() {
            bad "A host process holds it — stop that service yourself."; pause; continue
          fi
          confirm "Remove container '$name2'?" || continue
-         spin_run "Removing $name2" docker rm -f "$name2"
+         spin_run "Removing $name2" force_remove "$name2"
          sleep 1 ;;
       0|"") return ;;
       *) bad "$(t invalid)"; sleep 1 ;;
@@ -2597,8 +2735,9 @@ main_menu() {
     menu_item 17 "${B}$(t m_telegram)${R}"
     menu_item 18 "$(t m_lang)"
     menu_item 19 "$(t m_ports)"
-    menu_item 20 "$(t m_debug)"
-    menu_item 21 "$(t m_update)"
+    menu_item 20 "$(t m_cleanup)"
+    menu_item 21 "$(t m_debug)"
+    menu_item 22 "$(t m_update)"
     printf '\n'
     menu_item  0 "$(t m_quit)"
     printf '\n'
@@ -2610,7 +2749,8 @@ main_menu() {
       12) action_export ;; 13) action_wg ;;     14) action_healer ;;
       15) action_backup ;; 16) action_defaults ;; 17) action_telegram ;;
       18) action_lang ;;    19) action_ports ;;
-      20) action_debug ;;    21) action_update ;;
+      20) action_cleanup ;;  21) action_debug ;;
+      22) action_update ;;
       0|q|Q) banner; printf '  %sBye.%s\n\n' "$GRN" "$R"; exit 0 ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -2669,6 +2809,7 @@ main() {
     --update)  action_update ;;
     --ports)   action_ports ;;
     --debug)   action_debug ;;
+    --cleanup) action_cleanup ;;
     --bot)     bot_installed || bot_install_files; exec "$BOT_FILE" ;;
     "")        main_menu ;;
     *)         usage; exit 1 ;;

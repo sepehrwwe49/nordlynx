@@ -208,6 +208,29 @@ take about as long as one instead of five times as long:
 Anything that fails gets its last log lines printed and can be retried on the spot —
 NordVPN hands out a different server each attempt.
 
+## Protocol probe (menu 22)
+
+Some datacenters simply cannot reach a given country over UDP/WireGuard, while
+OpenVPN/TCP to the same country works fine. Instead of guessing, probe it: a throwaway
+container tries each combination and reports what actually connects, and how fast.
+
+```
+  COMBINATION              RESULT     TIME
+  ────────────────────────────────────────
+  NordLynx / UDP           blocked    —
+  OpenVPN / UDP            blocked    —
+  OpenVPN / TCP            works      6s
+
+  Pick the combination to build Australia with:
+    1  OpenVPN / TCP   connected in 6s
+```
+
+Pick one and it builds the location with exactly that. Headless: `sudo nordlynx --probe`.
+
+> **No silent switching.** If you choose NordLynx, the container stays on NordLynx and
+> fails loudly rather than quietly downgrading to OpenVPN. The automatic fallback is a
+> per-location toggle, **off by default** (menu 6 → item 13, or menu 16 → item 9).
+
 ## Per-location settings (menu 6)
 
 Pick a container, change anything, hit **A** to apply — it rebuilds with the same

@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.8.1"
+VERSION="2.9.0"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -41,6 +41,7 @@ DEF_AUTOCONNECT="on"
 DEF_LAN="on"
 DEF_ANALYTICS="off"
 DEF_INNER_PORT=1080
+DEF_FALLBACK="off"        # never silently switch NordLynx -> OpenVPN
 DEF_PRIVILEGED="on"        # the NordVPN daemon writes to /proc/sys during connect
 BIND_ADDR_DEFAULT="127.0.0.1"
 
@@ -655,6 +656,26 @@ T_ru[m_cleanup]="Очистка мёртвых / дублирующих конт
 T_zh[m_cleanup]="清理无效 / 重复的容器"
 T_fa[m_cleanup]="پاکسازی کانتینرهای مرده / تکراری"
 T_fs[m_cleanup]='ﯼﺭﺍﺮﮑﺗ / ﻩﺩﺮﻣ ﯼﺎﻫﺮﻨﯿﺘﻧﺎﮐ ﯼﺯﺎﺴﮐﺎﭘ'
+
+T_en[s_fallback]="OpenVPN fallback"
+T_fi[s_fallback]="Fallback be OpenVPN"
+T_ru[s_fallback]="Запасной OpenVPN"
+T_zh[s_fallback]="OpenVPN 回退"
+T_fa[s_fallback]="بازگشت به OpenVPN"
+T_fs[s_fallback]='OpenVPN ﻪﺑ ﺖﺸﮔﺯﺎﺑ'
+T_en[fb_off]="Off — if you pick NordLynx, it stays NordLynx and fails loudly."
+T_fi[fb_off]="Khamush — agar NordLynx entekhab koni, hamun mimune va shekast ra elam mikone."
+T_ru[fb_off]="Выключено — выбранный NordLynx останется NordLynx и честно сообщит об ошибке."
+T_zh[fb_off]="关闭 — 选择 NordLynx 就一直用 NordLynx，失败时明确报错。"
+T_fa[fb_off]="خاموش — اگر NordLynx انتخاب کنی همان می‌ماند و شکست را صریح اعلام می‌کند."
+T_fs[fb_off]='.ﺪﻨﮐﯽﻣ ﻡﻼﻋﺍ ﺢﯾﺮﺻ ﺍﺭ ﺖﺴﮑﺷ ﻭ ﺪﻧﺎﻣﯽﻣ ﻥﺎﻤﻫ ﯽﻨﮐ ﺏﺎﺨﺘﻧﺍ NordLynx ﺮﮔﺍ — ﺵﻮﻣﺎﺧ'
+
+T_en[m_probe]="Probe protocols for a country (NordLynx / OpenVPN)"
+T_fi[m_probe]="Test-e protocol-ha baraye yek keshvar (NordLynx / OpenVPN)"
+T_ru[m_probe]="Проверить протоколы для страны (NordLynx / OpenVPN)"
+T_zh[m_probe]="探测某国家可用的协议 (NordLynx / OpenVPN)"
+T_fa[m_probe]="تست پروتکل‌ها برای یک کشور (NordLynx / OpenVPN)"
+T_fs[m_probe]='(NordLynx / OpenVPN) ﺭﻮﺸﮐ ﮏﯾ ﯼﺍﺮﺑ ﺎﻫﻞﮑﺗﻭﺮﭘ ﺖﺴﺗ'
 
 t() { local k="$1" v=""
   case "$UI_LANG" in
@@ -1316,7 +1337,7 @@ ENV NORD_COUNTRY=United_States \
     NORD_AUTOCONNECT=on \
     NORD_LAN=on \
     NORD_ANALYTICS=off \
-    NORD_FALLBACK=on \
+    NORD_FALLBACK=off \
     SOCKS_PORT=1080
 
 COPY entrypoint.sh /entrypoint.sh
@@ -1463,10 +1484,14 @@ try_connect() {
   esac
   return 0
 }
-# Some countries hand out a bad server now and then; each retry gets a new one.
+# Each retry gets a different server. Two failures already mean "this datacenter
+# cannot reach that country over UDP", so hand over to the OpenVPN fallback fast
+# instead of burning five minutes.
+MAX_TRIES=5
+[ "$TECH" = "NordLynx" ] && [ "${NORD_FALLBACK:-off}" = "on" ] && MAX_TRIES=2
 CONNECTED=0
-for attempt in 1 2 3 4 5; do
-  [ "$attempt" -gt 1 ] && say 6/7 "Retry ${attempt}/5 (NordVPN picks a different server each time)…"
+for attempt in $(seq 1 "$MAX_TRIES"); do
+  [ "$attempt" -gt 1 ] && say 6/7 "Retry ${attempt}/${MAX_TRIES} (NordVPN picks a different server each time)…"
   try_connect; CONNECT_RC=$?
   if [ "$CONNECT_RC" = "2" ]; then
     echo "      the daemon is already connecting — waiting instead of interfering"
@@ -1482,8 +1507,12 @@ for attempt in 1 2 3 4 5; do
   fi
   sleep 2
 done
-if [ "$CONNECTED" != "1" ] && [ "$TECH" = "NordLynx" ] && [ "${NORD_FALLBACK:-on}" = "on" ]; then
-  echo "      NordLynx did not come up — falling back to OpenVPN for this container."
+if [ "$CONNECTED" != "1" ] && [ "$TECH" = "NordLynx" ] && [ "${NORD_FALLBACK:-off}" != "on" ]; then
+  echo "      OpenVPN fallback is disabled — staying on NordLynx as configured."
+fi
+if [ "$CONNECTED" != "1" ] && [ "$TECH" = "NordLynx" ] && [ "${NORD_FALLBACK:-off}" = "on" ]; then
+  echo "      NordLynx failed ${MAX_TRIES}x — UDP to ${COUNTRY} looks blocked from this host."
+  echo "      Falling back to OpenVPN."
   nordvpn set technology OpenVPN >/dev/null 2>&1
   for fb_proto in UDP TCP; do
     echo "      trying OpenVPN/${fb_proto}…"
@@ -1522,6 +1551,10 @@ if [ "$AUTOCONNECT" = "on" ]; then
   fi
   echo "      auto-connect armed for restarts"
 fi
+
+ACTIVE_TECH="$(nordvpn status 2>/dev/null | awk -F': ' '/technology/{print $2}' | tr -d '\r')"
+ACTIVE_PROTO="$(nordvpn status 2>/dev/null | awk -F': ' '/protocol/{print $2}' | tr -d '\r')"
+echo "      tunnel is up over ${ACTIVE_TECH:-?}/${ACTIVE_PROTO:-?}"
 
 say 7/7 "Starting microsocks on 0.0.0.0:${PORT}…"
 exec microsocks -i 0.0.0.0 -p "$PORT"
@@ -1562,7 +1595,7 @@ cfg_reset() {
   CFG=( [name]="" [country]="United_States" [city]="" [hport]="" [iport]="$DEF_INNER_PORT"
         [bind]="$BIND_ADDR_DEFAULT" [tech]="$DEF_TECH" [proto]="$DEF_PROTO"
         [auto]="$DEF_AUTOCONNECT" [lan]="$DEF_LAN" [analytics]="$DEF_ANALYTICS"
-        [token]="$(tok_first)" [priv]="$DEF_PRIVILEGED" )
+        [token]="$(tok_first)" [priv]="$DEF_PRIVILEGED" [fallback]="$DEF_FALLBACK" )
 }
 
 cfg_load() {   # cfg_load <container>
@@ -1574,6 +1607,8 @@ cfg_load() {   # cfg_load <container>
   CFG[bind]="$(f bind)";        CFG[tech]="$(f tech)";   CFG[proto]="$(f proto)"
   CFG[auto]="$(f auto)";        CFG[lan]="$(f lan)";     CFG[analytics]="$(f analytics)"
   CFG[token]="$(f token)";      CFG[city]="$(f city)";   CFG[priv]="$(f priv)"
+  CFG[fallback]="$(f fallback)"
+  [[ -z "${CFG[fallback]}" || "${CFG[fallback]}" == "<no value>" ]] && CFG[fallback]="$DEF_FALLBACK"
   [[ -z "${CFG[priv]}" || "${CFG[priv]}" == "<no value>" ]] && CFG[priv]="$DEF_PRIVILEGED"
   [[ "${CFG[token]}" == "<no value>" ]] && CFG[token]=""
   [[ "${CFG[city]}"  == "<no value>" ]] && CFG[city]=""
@@ -1604,6 +1639,7 @@ cfg_show() {
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_lan)" 18)"  "$R" "$(on_off "${CFG[lan]}")"
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_analytics)" 18)"      "$R" "$(on_off "${CFG[analytics]}")"
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_priv)" 18)"            "$R" "$(on_off "${CFG[priv]}")"
+  printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_fallback)" 18)"        "$R" "$(on_off "${CFG[fallback]}")"
   printf '\n'
 }
 
@@ -1691,13 +1727,14 @@ cfg_start() {   # docker run only — returns as soon as the container is up
       -e NORD_AUTOCONNECT="${CFG[auto]}" \
       -e NORD_LAN="${CFG[lan]}" \
       -e NORD_ANALYTICS="${CFG[analytics]}" \
-      -e NORD_FALLBACK=on \
+      -e NORD_FALLBACK="${CFG[fallback]}" \
       -e SOCKS_PORT="${CFG[iport]}" \
       --label "${LABEL_NS}.managed=1" \
       --label "${LABEL_NS}.country=${CFG[country]}" \
       --label "${LABEL_NS}.city=${CFG[city]}" \
       --label "${LABEL_NS}.token=${CFG[token]}" \
       --label "${LABEL_NS}.priv=${CFG[priv]}" \
+      --label "${LABEL_NS}.fallback=${CFG[fallback]}" \
       --label "${LABEL_NS}.port=${CFG[hport]}" \
       --label "${LABEL_NS}.iport=${CFG[iport]}" \
       --label "${LABEL_NS}.bind=${CFG[bind]}" \
@@ -1975,6 +2012,7 @@ action_settings() {
     menu_item 10 "$(padr "$(t s_token)" 22)${B}${CFG[token]}${R}"
     menu_item 11 "$(padr "$(t s_city)" 22)${B}${CFG[city]:-any}${R}"
     menu_item 12 "$(padr "$(t s_priv)" 22)$(on_off "${CFG[priv]}")"
+    menu_item 13 "$(padr "$(t s_fallback)" 22)$(on_off "${CFG[fallback]}")"
     printf '\n'
     menu_item "A" "${B}${GRN}Apply — recreate the container${R}"
     menu_item 0 "Back (discard)"
@@ -1999,6 +2037,7 @@ action_settings() {
       9) CFG[analytics]="$(toggle "${CFG[analytics]}")"; dirty=1 ;;
       10) local tn; tn="$(pick_token)" && { CFG[token]="$tn"; dirty=1; } ;;
       11) CFG[city]="$(pick_city "${CFG[country]}")"; dirty=1 ;;
+      13) CFG[fallback]="$(toggle "${CFG[fallback]}")"; dirty=1 ;;
       12) CFG[priv]="$(toggle "${CFG[priv]}")"; dirty=1
           [[ "${CFG[priv]}" == "off" ]] && { warn "$(t priv_why)"; sleep 3; } ;;
       a|A)
@@ -2026,6 +2065,7 @@ action_defaults() {
     menu_item 6 "$(padr "$(t s_iport)" 22)${B}${DEF_INNER_PORT}${R}"
     menu_item 7 "$(padr "$(t s_bind)" 22)${B}${BIND_ADDR_DEFAULT}${R}"
     menu_item 8 "$(padr "$(t s_priv)" 22)$(on_off "$DEF_PRIVILEGED")"
+    menu_item 9 "$(padr "$(t s_fallback)" 22)$(on_off "$DEF_FALLBACK")"
     printf '\n'
     menu_item 0 "Back"
     printf '\n'
@@ -2038,6 +2078,8 @@ action_defaults() {
       5) DEF_ANALYTICS="$(toggle "$DEF_ANALYTICS")" ;;
       6) DEF_INNER_PORT="$(ask "$(t inner_port_prompt)" "$DEF_INNER_PORT")" ;;
       7) BIND_ADDR_DEFAULT="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")" ;;
+      9) DEF_FALLBACK="$(toggle "$DEF_FALLBACK")"
+         printf '\n'; info "$(t fb_off)"; sleep 2 ;;
       8) DEF_PRIVILEGED="$(toggle "$DEF_PRIVILEGED")"
          printf '\n'; info "$(t priv_why)"; warn "$(t priv_risk)"; sleep 3 ;;
       0|"") save_conf; return ;;
@@ -2507,6 +2549,111 @@ action_ports() {
   done
 }
 
+
+# ================================================================== probe =====
+# Some datacenters cannot reach a given country over UDP/WireGuard at all, while
+# OpenVPN/TCP works fine. Rather than guessing, try each combination in a
+# throwaway container and report what actually connects, and how fast.
+probe_country() {   # probe_country <container> <country> <tech> <proto> -> seconds or ""
+  local c="$1" country="$2" tech="$3" proto="$4" t0 t1 out
+  docker exec "$c" nordvpn disconnect >/dev/null 2>&1
+  docker exec "$c" nordvpn set technology "$tech" >/dev/null 2>&1 || return 1
+  [[ "$tech" == "OpenVPN" ]] && docker exec "$c" nordvpn set protocol "$proto" >/dev/null 2>&1
+  t0=$SECONDS
+  out="$(docker exec "$c" timeout 75 nordvpn connect "$country" 2>&1)"
+  if grep -qi 'You are connected' <<<"$out"; then
+    t1=$SECONDS
+    printf '%s' "$(( t1 - t0 ))"
+    return 0
+  fi
+  return 1
+}
+
+action_probe() {
+  banner; title "$(t m_probe)"
+  have docker  || { bad "Docker missing."; pause; return; }
+  image_exists || { bad "$(t no_image)"; pause; return; }
+  token_ok     || { bad "$(t no_tokens)"; pause; return; }
+
+  local tkn; tkn="$(pick_token)" || { pause; return; }
+  banner; title "$(t m_probe)"
+  local country; country="$(pick_country)" || { warn "$(t cancelled)"; pause; return; }
+
+  local name="nlm-probe" token; token="$(token_get "$tkn")"
+  banner; title "$(t m_probe) — $country"
+  printf '\n'
+  docker rm -f "$name" >/dev/null 2>&1
+  spin_run "Starting a throwaway probe container" \
+    docker run -d --name "$name" \
+      --cap-add=NET_ADMIN --cap-add=NET_RAW --cap-add=SYS_MODULE \
+      --device=/dev/net/tun -v /lib/modules:/lib/modules:ro \
+      --sysctl net.ipv4.conf.all.src_valid_mark=1 \
+      --sysctl net.ipv6.conf.all.disable_ipv6=1 --privileged \
+      --entrypoint sleep "$IMAGE" infinity || { pause; return; }
+
+  spin_run "Starting the NordVPN daemon and logging in" bash -c "
+    docker exec '$name' /etc/init.d/nordvpn start >/dev/null 2>&1
+    for i in \$(seq 1 30); do
+      docker exec '$name' nordvpn status >/dev/null 2>&1 && break
+      sleep 2
+    done
+    docker exec '$name' sh -c 'yes no | nordvpn set analytics off' >/dev/null 2>&1
+    docker exec '$name' sh -c 'yes no | nordvpn login --token \"$token\"' >/dev/null 2>&1
+    docker exec '$name' nordvpn set firewall off   >/dev/null 2>&1
+    docker exec '$name' nordvpn set killswitch off >/dev/null 2>&1
+    docker exec '$name' nordvpn account >/dev/null 2>&1"
+
+  printf '\n  %s%-24s %-10s %s%s\n' "$B$GRY" "COMBINATION" "RESULT" "TIME" "$R"
+  printf '  %s%s%s\n' "$GRY" "$(printf '─%.0s' $(seq 1 52))" "$R"
+
+  local -a combos=("NordLynx|UDP" "OpenVPN|UDP" "OpenVPN|TCP")
+  local -a okcombo=() oktime=()
+  local combo tech proto secs
+  for combo in "${combos[@]}"; do
+    IFS='|' read -r tech proto <<<"$combo"
+    printf '  %-24s %s…testing%s' "$tech / $proto" "$YLW" "$R"
+    if secs="$(probe_country "$name" "$country" "$tech" "$proto")"; then
+      printf '\r  %-24s %s%-10s%s %ss\033[K\n' "$tech / $proto" "$GRN" "works" "$R" "$secs"
+      okcombo+=("$combo"); oktime+=("$secs")
+    else
+      printf '\r  %-24s %s%-10s%s —\033[K\n' "$tech / $proto" "$RED" "blocked" "$R"
+    fi
+  done
+
+  docker rm -f "$name" >/dev/null 2>&1
+
+  printf '\n'
+  if (( ${#okcombo[@]} == 0 )); then
+    bad "Nothing connected to $country from this server."
+    warn "The account, the token and the container are fine — this is the network path."
+    pause; return
+  fi
+
+  local i
+  printf '  %sPick the combination to build %s with:%s\n\n' "$GRY" "$country" "$R"
+  for i in "${!okcombo[@]}"; do
+    IFS='|' read -r tech proto <<<"${okcombo[$i]}"
+    menu_item $(( i + 1 )) "$tech / $proto   ${GRY}connected in ${oktime[$i]}s${R}"
+  done
+  printf '\n'; menu_item 0 "Back without building"; printf '\n'
+
+  local sel; sel="$(ask "$(t choose)" "1")"
+  [[ "$sel" =~ ^[0-9]+$ ]] && (( sel >= 1 && sel <= ${#okcombo[@]} )) || return
+  IFS='|' read -r tech proto <<<"${okcombo[$(( sel - 1 ))]}"
+
+  printf '\n'
+  local p; p="$(ask "$(t port_prompt)" "$(next_free_port)")"
+  [[ "$p" =~ ^[0-9]+$ ]] || { bad "$(t invalid)"; pause; return; }
+  p="$(resolve_port "$p")" || { warn "$(t cancelled)"; pause; return; }
+
+  cfg_reset
+  CFG[token]="$tkn"; CFG[country]="$country"; CFG[hport]="$p"
+  CFG[tech]="$tech"; CFG[proto]="$proto"
+  CFG[bind]="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")"
+  cfg_create
+  pause
+}
+
 # ================================================================ diagnose ====
 # Spins up a throwaway container from the same image, drives NordVPN by hand and
 # dumps everything that matters. The token is read from the vault, never typed.
@@ -2781,6 +2928,7 @@ DEF_LAN=$DEF_LAN
 DEF_ANALYTICS=$DEF_ANALYTICS
 DEF_INNER_PORT=$DEF_INNER_PORT
 DEF_PRIVILEGED=$DEF_PRIVILEGED
+DEF_FALLBACK=$DEF_FALLBACK
 BIND_ADDR_DEFAULT=$BIND_ADDR_DEFAULT
 EOF
   chmod 600 "$CONF_FILE"
@@ -2829,7 +2977,8 @@ main_menu() {
     menu_item 19 "$(t m_ports)"
     menu_item 20 "$(t m_cleanup)"
     menu_item 21 "$(t m_debug)"
-    menu_item 22 "$(t m_update)"
+    menu_item 22 "${B}$(t m_probe)${R}"
+    menu_item 23 "$(t m_update)"
     printf '\n'
     menu_item  0 "$(t m_quit)"
     printf '\n'
@@ -2842,7 +2991,7 @@ main_menu() {
       15) action_backup ;; 16) action_defaults ;; 17) action_telegram ;;
       18) action_lang ;;    19) action_ports ;;
       20) action_cleanup ;;  21) action_debug ;;
-      22) action_update ;;
+      22) action_probe ;;    23) action_update ;;
       0|q|Q) banner; printf '  %sBye.%s\n\n' "$GRN" "$R"; exit 0 ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -2902,6 +3051,7 @@ main() {
     --ports)   action_ports ;;
     --debug)   action_debug ;;
     --cleanup) action_cleanup ;;
+    --probe)   action_probe ;;
     --bot)     bot_installed || bot_install_files; exec "$BOT_FILE" ;;
     "")        main_menu ;;
     *)         usage; exit 1 ;;

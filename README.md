@@ -195,6 +195,19 @@ you choose:
   ? Which locations? [all]:
 ```
 
+Containers are started **all at once** and then watched together, so five locations
+take about as long as one instead of five times as long:
+
+```
+  CONTAINER                    COUNTRY                PORT    STATE
+  nord-1-united-states         United_States          1081    connected
+  nord-2-turkey                Turkey                 1082    connecting…
+  nord-3-united-arab-emirates  United_Arab_Emirates   1083    connected
+```
+
+Anything that fails gets its last log lines printed and can be retried on the spot —
+NordVPN hands out a different server each attempt.
+
 ## Per-location settings (menu 6)
 
 Pick a container, change anything, hit **A** to apply — it rebuilds with the same
@@ -442,6 +455,7 @@ NordVPN will then fail to connect on current versions.
 | Log stops at `[3/7] Logging in…`, `nordvpn account` says "You're not logged in" | NordVPN CLI 4.x/5.x asks for a privacy-consent decision on first run and blocks every other command until it gets one. It only accepts the full words `yes`/`no` — `y`/`n` loop forever on `Invalid response`. v2.5.2 answers it correctly before logging in |
 | `We couldn't reach System Daemon` | The daemon socket appears before the daemon can answer. v2.4.0 polls until it really responds, and restarts the service once if it doesn't |
 | `We couldn't connect you to the VPN` and the daemon log says `nft failed with: exec: "nft": executable file not found` | The NordVPN 5.x daemon builds its firewall rules with **nftables**, so the `nft` binary must exist in the image. Fixed in v2.5.1 — rebuild the image (menu 3) |
+| Log shows `Connecting to NordVPN is already in progress.` and the location never comes up | Auto-connect was armed before our own connect, so the daemon and the script fought over the tunnel — and the retry loop's `disconnect` killed the daemon's attempt. Fixed in v2.8.1: auto-connect is armed only after a successful connect, and an in-flight attempt is never interrupted |
 | `We couldn't connect you to the VPN`, daemon log says `sysctl: permission denied on key "net.ipv6.conf.all.disable_ipv6"` | Docker mounts `/proc/sys` read-only. Fixed in v2.6.0 — containers now run with `--privileged`. Rebuild and recreate |
 | `We couldn't connect you to the VPN` on NordLynx | The **host** kernel needs the `wireguard` module — a container cannot provide it. Menu 1 installs and loads it. If your VPS kernel has no WireGuard support, containers automatically fall back to OpenVPN (v2.4.0) |
 | Updated the script but the container log looks unchanged | The entrypoint is baked **into the image**. Run menu 3 to rebuild, then recreate the containers. Since v2.3.3 the script detects this itself and offers the rebuild — the health line shows `image ▲` when the image is older than the script |

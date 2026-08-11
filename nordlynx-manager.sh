@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="2.9.0"
+VERSION="2.9.2"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -2554,18 +2554,30 @@ action_ports() {
 # Some datacenters cannot reach a given country over UDP/WireGuard at all, while
 # OpenVPN/TCP works fine. Rather than guessing, try each combination in a
 # throwaway container and report what actually connects, and how fast.
-probe_country() {   # probe_country <container> <country> <tech> <proto> -> seconds or ""
-  local c="$1" country="$2" tech="$3" proto="$4" t0 t1 out
+PROBE_REASON=""; PROBE_SECS=""
+probe_country() {   # sets PROBE_SECS / PROBE_REASON; returns 0 on success
+  local c="$1" country="$2" tech="$3" proto="$4" t0 out try
+  PROBE_REASON=""
   docker exec "$c" nordvpn disconnect >/dev/null 2>&1
-  docker exec "$c" nordvpn set technology "$tech" >/dev/null 2>&1 || return 1
-  [[ "$tech" == "OpenVPN" ]] && docker exec "$c" nordvpn set protocol "$proto" >/dev/null 2>&1
-  t0=$SECONDS
-  out="$(docker exec "$c" timeout 75 nordvpn connect "$country" 2>&1)"
-  if grep -qi 'You are connected' <<<"$out"; then
-    t1=$SECONDS
-    printf '%s' "$(( t1 - t0 ))"
-    return 0
+  if ! docker exec "$c" nordvpn set technology "$tech" >/dev/null 2>&1; then
+    PROBE_REASON="cannot select $tech"; return 1
   fi
+  if [[ "$tech" == "OpenVPN" ]]; then
+    docker exec "$c" nordvpn set protocol "$proto" >/dev/null 2>&1 \
+      || { PROBE_REASON="cannot select $proto"; return 1; }
+  fi
+  # two attempts: NordVPN hands out a different server each time
+  for try in 1 2; do
+    t0=$SECONDS
+    out="$(docker exec "$c" timeout 75 nordvpn connect "$country" 2>&1)"
+    if grep -qi 'You are connected' <<<"$out"; then
+      PROBE_SECS="$(( SECONDS - t0 ))"
+      return 0
+    fi
+    PROBE_REASON="$(printf '%s' "$out" | tr -d '\r' | tail -1 | cut -c1-60)"
+    docker exec "$c" nordvpn disconnect >/dev/null 2>&1
+    sleep 2
+  done
   return 1
 }
 
@@ -2591,17 +2603,39 @@ action_probe() {
       --sysctl net.ipv6.conf.all.disable_ipv6=1 --privileged \
       --entrypoint sleep "$IMAGE" infinity || { pause; return; }
 
-  spin_run "Starting the NordVPN daemon and logging in" bash -c "
-    docker exec '$name' /etc/init.d/nordvpn start >/dev/null 2>&1
-    for i in \$(seq 1 30); do
-      docker exec '$name' nordvpn status >/dev/null 2>&1 && break
-      sleep 2
-    done
-    docker exec '$name' sh -c 'yes no | nordvpn set analytics off' >/dev/null 2>&1
-    docker exec '$name' sh -c 'yes no | nordvpn login --token \"$token\"' >/dev/null 2>&1
-    docker exec '$name' nordvpn set firewall off   >/dev/null 2>&1
-    docker exec '$name' nordvpn set killswitch off >/dev/null 2>&1
-    docker exec '$name' nordvpn account >/dev/null 2>&1"
+  # Bring the daemon up and log in — and verify each step, because a silent
+  # failure here would make every protocol look "blocked".
+  step "Preparing the probe container"
+
+  docker exec "$name" /etc/init.d/nordvpn start >/dev/null 2>&1
+  local ready=0 i
+  for (( i=0; i<45; i++ )); do
+    if ! docker exec "$name" nordvpn status 2>&1 | grep -qi "couldn't reach System Daemon"; then
+      ready=1; break
+    fi
+    sleep 2
+  done
+  if (( ! ready )); then
+    bad "The NordVPN daemon never answered inside the probe container."
+    docker rm -f "$name" >/dev/null 2>&1; pause; return
+  fi
+  ok "daemon is answering"
+
+  docker exec "$name" sh -c 'yes no | nordvpn set analytics off' >/dev/null 2>&1
+  local login_out
+  login_out="$(docker exec -e NLM_TOK="$token" "$name" \
+      sh -c 'yes no | nordvpn login --token "$NLM_TOK" 2>&1' | head -3)"
+  if docker exec "$name" nordvpn account 2>&1 | grep -qi 'Email'; then
+    ok "logged in"
+  else
+    bad "Login failed inside the probe container."
+    printf '      %s\n' "$login_out"
+    docker rm -f "$name" >/dev/null 2>&1; pause; return
+  fi
+
+  docker exec "$name" nordvpn set firewall off   >/dev/null 2>&1
+  docker exec "$name" nordvpn set killswitch off >/dev/null 2>&1
+  docker exec "$name" nordvpn set lan-discovery on >/dev/null 2>&1
 
   printf '\n  %s%-24s %-10s %s%s\n' "$B$GRY" "COMBINATION" "RESULT" "TIME" "$R"
   printf '  %s%s%s\n' "$GRY" "$(printf '─%.0s' $(seq 1 52))" "$R"
@@ -2612,11 +2646,13 @@ action_probe() {
   for combo in "${combos[@]}"; do
     IFS='|' read -r tech proto <<<"$combo"
     printf '  %-24s %s…testing%s' "$tech / $proto" "$YLW" "$R"
-    if secs="$(probe_country "$name" "$country" "$tech" "$proto")"; then
+    if probe_country "$name" "$country" "$tech" "$proto"; then
+      secs="$PROBE_SECS"
       printf '\r  %-24s %s%-10s%s %ss\033[K\n' "$tech / $proto" "$GRN" "works" "$R" "$secs"
       okcombo+=("$combo"); oktime+=("$secs")
     else
-      printf '\r  %-24s %s%-10s%s —\033[K\n' "$tech / $proto" "$RED" "blocked" "$R"
+      printf '\r  %-24s %s%-10s%s %s\033[K\n' "$tech / $proto" "$RED" "blocked" "$R" \
+        "${GRY}${PROBE_REASON}${R}"
     fi
   done
 

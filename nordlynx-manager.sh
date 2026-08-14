@@ -10,7 +10,7 @@
 # ==============================================================================
 set -uo pipefail
 
-VERSION="3.0.0"
+VERSION="3.1.0"
 APP_NAME="NordLynx Manager"
 
 # ------------------------------------------------------------------ paths ----
@@ -41,6 +41,7 @@ DEF_AUTOCONNECT="on"
 DEF_LAN="on"
 DEF_ANALYTICS="off"
 DEF_INNER_PORT=1080
+DEF_ENGINE="gost"         # gost = SOCKS5 with UDP; microsocks = TCP only
 DEF_FALLBACK="off"        # never silently switch NordLynx -> OpenVPN
 DEF_PRIVILEGED="on"        # the NordVPN daemon writes to /proc/sys during connect
 BIND_ADDR_DEFAULT="127.0.0.1"
@@ -689,6 +690,25 @@ T_ru[sess_limit]="Достигнут лимит устройств? NordVPN ра
 T_zh[sess_limit]="达到设备上限？NordVPN 允许 6-10 台同时在线。用菜单 20 释放，或在菜单 2 添加第二个令牌。"
 T_fa[sess_limit]="سهمیه پر شده؟ نورد ۶ تا ۱۰ دستگاه هم‌زمان می‌دهد. با منوی ۲۰ آزاد کن یا در منوی ۲ توکن دوم اضافه کن."
 T_fs[sess_limit]='.ﻦﮐ ﻪﻓﺎﺿﺍ ﻡﻭﺩ ﻦﮐﻮﺗ ۲ ﯼﻮﻨﻣ ﺭﺩ ﺎﯾ ﻦﮐ ﺩﺍﺯﺁ ۲۰ ﯼﻮﻨﻣ ﺎﺑ .ﺪﻫﺩﯽﻣ ﻥﺎﻣﺯﻢﻫ ﻩﺎﮕﺘﺳﺩ ۱۰ ﺎﺗ ۶ ﺩﺭﻮﻧ ؟ﻩﺪﺷ ﺮﭘ ﻪﯿﻤﻬﺳ'
+
+T_en[s_engine]="Proxy engine"
+T_fi[s_engine]="Proxy engine"
+T_ru[s_engine]="Прокси-движок"
+T_zh[s_engine]="代理引擎"
+T_fa[s_engine]="موتور پروکسی"
+T_fs[s_engine]='ﯽﺴﮐﻭﺮﭘ ﺭﻮﺗﻮﻣ'
+T_en[m_migrate]="Upgrade existing locations to the UDP proxy (GOST)"
+T_fi[m_migrate]="Ertegha-ye location-haye mojood be proxy-e UDP (GOST)"
+T_ru[m_migrate]="Обновить существующие локации на UDP-прокси (GOST)"
+T_zh[m_migrate]="将现有节点升级为支持 UDP 的代理 (GOST)"
+T_fa[m_migrate]="ارتقای لوکیشن‌های موجود به پروکسی UDP (گاست)"
+T_fs[m_migrate]='(ﺖﺳﺎﮔ) UDP ﯽﺴﮐﻭﺮﭘ ﻪﺑ ﺩﻮﺟﻮﻣ ﯼﺎﻫﻦﺸﯿﮐﻮﻟ ﯼﺎﻘﺗﺭﺍ'
+T_en[eng_why]="microsocks is TCP-only, so QUIC and DNS-over-UDP die: chat apps work but browsers show DNS errors. GOST carries UDP too."
+T_fi[eng_why]="microsocks faghat TCP ast, pas QUIC va DNS rooye UDP kar nemikonad: messenger-ha kar mikonand vali browser khata-ye DNS midahad. GOST UDP ra ham mibarad."
+T_ru[eng_why]="microsocks работает только с TCP, поэтому QUIC и DNS по UDP не проходят: мессенджеры работают, а браузер выдаёт ошибки DNS. GOST передаёт и UDP."
+T_zh[eng_why]="microsocks 仅支持 TCP，因此 QUIC 与基于 UDP 的 DNS 会失败：聊天应用可用但浏览器报 DNS 错误。GOST 同时支持 UDP。"
+T_fa[eng_why]="میکروساکس فقط TCP است، پس QUIC و DNS روی UDP از کار می‌افتند: پیام‌رسان‌ها کار می‌کنند ولی مرورگر خطای DNS می‌دهد. گاست UDP را هم عبور می‌دهد."
+T_fs[eng_why]='.ﺪﻫﺩﯽﻣ ﺭﻮﺒﻋ ﻢﻫ ﺍﺭ UDP ﺖﺳﺎﮔ .ﺪﻫﺩﯽﻣ DNS ﯼﺎﻄﺧ ﺮﮔﺭﻭﺮﻣ ﯽﻟﻭ ﺪﻨﻨﮐﯽﻣ ﺭﺎﮐ ﺎﻫﻥﺎﺳﺭﻡﺎﯿﭘ :ﺪﻨﺘﻓﺍﯽﻣ ﺭﺎﮐ ﺯﺍ UDP ﯼﻭﺭ DNS ﻭ QUIC ﺲﭘ ،ﺖﺳﺍ TCP ﻂﻘﻓ ﺲﮐﺎﺳﻭﺮﮑﯿﻣ'
 
 t() { local k="$1" v=""
   case "$UI_LANG" in
@@ -1348,7 +1368,24 @@ RUN curl -fsSL https://repo.nordvpn.com/gpg/nordvpn_public.asc \
     && apt-get install -y --no-install-recommends nordvpn \
     && rm -rf /var/lib/apt/lists/*
 
-# --- microsocks (tiny SOCKS5 server) -----------------------------------------
+# --- GOST v3: SOCKS5 with UDP ------------------------------------------------
+# microsocks speaks TCP only. Browsers need UDP for QUIC and for DNS, so with a
+# TCP-only proxy chat apps work but web pages fail to resolve. GOST does both.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    tag="$(curl -fsSL https://api.github.com/repos/go-gost/gost/releases/latest \
+           | grep -m1 '"tag_name"' | cut -d'"' -f4)"; \
+    [ -n "$tag" ] || tag="v3.0.0-rc10"; \
+    ver="${tag#v}"; \
+    url="https://github.com/go-gost/gost/releases/download/${tag}/gost_${ver}_linux_${arch}.tar.gz"; \
+    curl -fsSL "$url" -o /tmp/gost.tgz \
+      || curl -fsSL "https://github.com/go-gost/gost/releases/download/v3.0.0-rc10/gost_3.0.0-rc10_linux_${arch}.tar.gz" -o /tmp/gost.tgz; \
+    tar -xzf /tmp/gost.tgz -C /tmp gost; \
+    install -m 0755 /tmp/gost /usr/local/bin/gost; \
+    rm -rf /tmp/gost /tmp/gost.tgz; \
+    gost -V || true
+
+# --- microsocks (kept as a TCP-only fallback) --------------------------------
 RUN git clone --depth 1 https://github.com/rofl0r/microsocks /tmp/microsocks \
     && make -C /tmp/microsocks \
     && install -m 0755 /tmp/microsocks/microsocks /usr/local/bin/microsocks \
@@ -1364,6 +1401,7 @@ ENV NORD_COUNTRY=United_States \
     NORD_LAN=on \
     NORD_ANALYTICS=off \
     NORD_FALLBACK=off \
+    PROXY_ENGINE=gost \
     SOCKS_PORT=1080
 
 COPY entrypoint.sh /entrypoint.sh
@@ -1584,7 +1622,18 @@ ACTIVE_TECH="$(nordvpn status 2>/dev/null | awk -F': ' '/technology/{print $2}' 
 ACTIVE_PROTO="$(nordvpn status 2>/dev/null | awk -F': ' '/protocol/{print $2}' | tr -d '\r')"
 echo "      tunnel is up over ${ACTIVE_TECH:-?}/${ACTIVE_PROTO:-?}"
 
-say 7/7 "Starting microsocks on 0.0.0.0:${PORT}…"
+ENGINE="${PROXY_ENGINE:-gost}"
+if [ "$ENGINE" = "gost" ] && command -v gost >/dev/null 2>&1; then
+  say 7/7 "Starting GOST (SOCKS5 + UDP) on 0.0.0.0:${PORT}…"
+  # ?udp=true is required — GOST v3 keeps the UDP relay off by default and
+  # answers "socks5: UDP relay is disabled", which breaks DNS and QUIC.
+  exec gost -L "socks5://:${PORT}?udp=true"
+fi
+
+if [ "$ENGINE" = "gost" ]; then
+  echo "      gost binary missing — falling back to microsocks (TCP only)"
+fi
+say 7/7 "Starting microsocks (TCP only) on 0.0.0.0:${PORT}…"
 exec microsocks -i 0.0.0.0 -p "$PORT"
 ENTRYPOINT
 
@@ -1623,7 +1672,8 @@ cfg_reset() {
   CFG=( [name]="" [country]="United_States" [city]="" [hport]="" [iport]="$DEF_INNER_PORT"
         [bind]="$BIND_ADDR_DEFAULT" [tech]="$DEF_TECH" [proto]="$DEF_PROTO"
         [auto]="$DEF_AUTOCONNECT" [lan]="$DEF_LAN" [analytics]="$DEF_ANALYTICS"
-        [token]="$(tok_first)" [priv]="$DEF_PRIVILEGED" [fallback]="$DEF_FALLBACK" )
+        [token]="$(tok_first)" [priv]="$DEF_PRIVILEGED" [fallback]="$DEF_FALLBACK"
+        [engine]="$DEF_ENGINE" )
 }
 
 cfg_load() {   # cfg_load <container>
@@ -1637,6 +1687,8 @@ cfg_load() {   # cfg_load <container>
   CFG[token]="$(f token)";      CFG[city]="$(f city)";   CFG[priv]="$(f priv)"
   CFG[fallback]="$(f fallback)"
   [[ -z "${CFG[fallback]}" || "${CFG[fallback]}" == "<no value>" ]] && CFG[fallback]="$DEF_FALLBACK"
+  CFG[engine]="$(f engine)"
+  [[ -z "${CFG[engine]}" || "${CFG[engine]}" == "<no value>" ]] && CFG[engine]="microsocks"
   [[ -z "${CFG[priv]}" || "${CFG[priv]}" == "<no value>" ]] && CFG[priv]="$DEF_PRIVILEGED"
   [[ "${CFG[token]}" == "<no value>" ]] && CFG[token]=""
   [[ "${CFG[city]}"  == "<no value>" ]] && CFG[city]=""
@@ -1668,6 +1720,7 @@ cfg_show() {
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_analytics)" 18)"      "$R" "$(on_off "${CFG[analytics]}")"
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_priv)" 18)"            "$R" "$(on_off "${CFG[priv]}")"
   printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_fallback)" 18)"        "$R" "$(on_off "${CFG[fallback]}")"
+  printf '   %s%s%s %s\n'    "$GRY" "$(padr "$(t s_engine)" 18)"          "$R" "${B}${CFG[engine]}${R}"
   printf '\n'
 }
 
@@ -1757,6 +1810,7 @@ cfg_start() {   # docker run only — returns as soon as the container is up
       -e NORD_LAN="${CFG[lan]}" \
       -e NORD_ANALYTICS="${CFG[analytics]}" \
       -e NORD_FALLBACK="${CFG[fallback]}" \
+      -e PROXY_ENGINE="${CFG[engine]}" \
       -e SOCKS_PORT="${CFG[iport]}" \
       --label "${LABEL_NS}.managed=1" \
       --label "${LABEL_NS}.country=${CFG[country]}" \
@@ -1764,6 +1818,7 @@ cfg_start() {   # docker run only — returns as soon as the container is up
       --label "${LABEL_NS}.token=${CFG[token]}" \
       --label "${LABEL_NS}.priv=${CFG[priv]}" \
       --label "${LABEL_NS}.fallback=${CFG[fallback]}" \
+      --label "${LABEL_NS}.engine=${CFG[engine]}" \
       --label "${LABEL_NS}.port=${CFG[hport]}" \
       --label "${LABEL_NS}.iport=${CFG[iport]}" \
       --label "${LABEL_NS}.bind=${CFG[bind]}" \
@@ -2042,6 +2097,7 @@ action_settings() {
     menu_item 11 "$(padr "$(t s_city)" 22)${B}${CFG[city]:-any}${R}"
     menu_item 12 "$(padr "$(t s_priv)" 22)$(on_off "${CFG[priv]}")"
     menu_item 13 "$(padr "$(t s_fallback)" 22)$(on_off "${CFG[fallback]}")"
+    menu_item 14 "$(padr "$(t s_engine)" 22)${B}${CFG[engine]}${R}$( [[ "${CFG[engine]}" != "gost" ]] && printf ' %sTCP only%s' "$YLW" "$R" )"
     printf '\n'
     menu_item "A" "${B}${GRN}Apply — recreate the container${R}"
     menu_item 0 "Back (discard)"
@@ -2067,6 +2123,8 @@ action_settings() {
       10) local tn; tn="$(pick_token)" && { CFG[token]="$tn"; dirty=1; } ;;
       11) CFG[city]="$(pick_city "${CFG[country]}")"; dirty=1 ;;
       13) CFG[fallback]="$(toggle "${CFG[fallback]}")"; dirty=1 ;;
+      14) [[ "${CFG[engine]}" == "gost" ]] && CFG[engine]="microsocks" || CFG[engine]="gost"
+          dirty=1; info "$(t eng_why)"; sleep 3 ;;
       12) CFG[priv]="$(toggle "${CFG[priv]}")"; dirty=1
           [[ "${CFG[priv]}" == "off" ]] && { warn "$(t priv_why)"; sleep 3; } ;;
       a|A)
@@ -2095,6 +2153,7 @@ action_defaults() {
     menu_item 7 "$(padr "$(t s_bind)" 22)${B}${BIND_ADDR_DEFAULT}${R}"
     menu_item 8 "$(padr "$(t s_priv)" 22)$(on_off "$DEF_PRIVILEGED")"
     menu_item 9 "$(padr "$(t s_fallback)" 22)$(on_off "$DEF_FALLBACK")"
+    menu_item 10 "$(padr "$(t s_engine)" 22)${B}${DEF_ENGINE}${R}"
     printf '\n'
     menu_item 0 "Back"
     printf '\n'
@@ -2107,6 +2166,8 @@ action_defaults() {
       5) DEF_ANALYTICS="$(toggle "$DEF_ANALYTICS")" ;;
       6) DEF_INNER_PORT="$(ask "$(t inner_port_prompt)" "$DEF_INNER_PORT")" ;;
       7) BIND_ADDR_DEFAULT="$(ask "$(t bind_prompt)" "$BIND_ADDR_DEFAULT")" ;;
+      10) [[ "$DEF_ENGINE" == "gost" ]] && DEF_ENGINE="microsocks" || DEF_ENGINE="gost"
+          printf '\n'; info "$(t eng_why)"; sleep 3 ;;
       9) DEF_FALLBACK="$(toggle "$DEF_FALLBACK")"
          printf '\n'; info "$(t fb_off)"; sleep 2 ;;
       8) DEF_PRIVILEGED="$(toggle "$DEF_PRIVILEGED")"
@@ -2580,6 +2641,60 @@ action_ports() {
 }
 
 
+
+# ================================================================ migrate =====
+# Rebuild every existing location on the current image and settings. The usual
+# reason: they were built with microsocks (TCP only), so browsers cannot resolve
+# DNS or use QUIC while chat apps still work.
+action_migrate() {
+  banner; title "$(t m_migrate)"
+  preflight || return
+
+  local rows; rows="$(list_locations)"
+  if [[ -z "$rows" ]]; then printf '\n'; warn "$(t no_loc)"; pause; return; fi
+
+  printf '\n  %s%s%s\n\n' "$GRY" "$(t eng_why)" "$R"
+  printf '  %s%-26s %-20s %-7s %-12s %s%s\n' "$B$GRY" "CONTAINER" "COUNTRY" "PORT" "ENGINE" "ACTION" "$R"
+  printf '  %s%s%s\n' "$GRY" "$(printf '─%.0s' $(seq 1 82))" "$R"
+
+  local -a todo=()
+  local n c p b st tech proto ipn tokn city eng
+  while IFS=$'\t' read -r n c p b st tech proto ipn tokn city; do
+    [[ -z "$n" ]] && continue
+    eng="$(docker inspect "$n" --format "{{index .Config.Labels \"${LABEL_NS}.engine\"}}" 2>/dev/null)"
+    [[ -z "$eng" || "$eng" == "<no value>" ]] && eng="microsocks"
+    if [[ "$eng" == "$DEF_ENGINE" ]]; then
+      printf '  %-26s %-20s %-7s %-12s %s%s%s\n' "$n" "$c" "$p" "$eng" "$GRY" "up to date" "$R"
+    else
+      printf '  %-26s %-20s %-7s %-12s %s%s%s\n' "$n" "$c" "$p" "$eng" "$YLW" "→ $DEF_ENGINE" "$R"
+      todo+=("$n")
+    fi
+  done <<<"$rows"
+
+  printf '\n'
+  if (( ${#todo[@]} == 0 )); then ok "Every location already runs $DEF_ENGINE."; pause; return; fi
+
+  warn "${#todo[@]} container(s) will be rebuilt — same name, same port, same country."
+  info "Each one drops for a minute or two while it reconnects."
+  confirm "Rebuild them now?" || { warn "$(t cancelled)"; pause; return; }
+
+  local x ok_n=0 fail_n=0
+  for x in "${todo[@]}"; do
+    printf '\n  %s─── %s ───%s\n' "$C1" "$x" "$R"
+    cfg_load "$x"
+    CFG[engine]="$DEF_ENGINE"
+    CFG[name]="$x"
+    force_remove "$x" >/dev/null 2>&1
+    if cfg_create; then ok_n=$(( ok_n + 1 )); else fail_n=$(( fail_n + 1 )); fi
+  done
+
+  printf '\n'
+  ok "$ok_n rebuilt"
+  (( fail_n > 0 )) && bad "$fail_n failed — retry them from menu 5 or 6."
+  printf '\n  %sRemember: in Xray keep the socks outbound as is; UDP now passes through.%s\n' "$GRY" "$R"
+  pause
+}
+
 # ================================================================== probe =====
 # Some datacenters cannot reach a given country over UDP/WireGuard at all, while
 # OpenVPN/TCP works fine. Rather than guessing, try each combination in a
@@ -3005,6 +3120,7 @@ DEF_ANALYTICS=$DEF_ANALYTICS
 DEF_INNER_PORT=$DEF_INNER_PORT
 DEF_PRIVILEGED=$DEF_PRIVILEGED
 DEF_FALLBACK=$DEF_FALLBACK
+DEF_ENGINE=$DEF_ENGINE
 BIND_ADDR_DEFAULT=$BIND_ADDR_DEFAULT
 EOF
   chmod 600 "$CONF_FILE"
@@ -3054,7 +3170,8 @@ main_menu() {
     menu_item 20 "$(t m_cleanup)"
     menu_item 21 "$(t m_debug)"
     menu_item 22 "${B}$(t m_probe)${R}"
-    menu_item 23 "$(t m_update)"
+    menu_item 23 "${B}$(t m_migrate)${R}"
+    menu_item 24 "$(t m_update)"
     printf '\n'
     menu_item  0 "$(t m_quit)"
     printf '\n'
@@ -3067,7 +3184,8 @@ main_menu() {
       15) action_backup ;; 16) action_defaults ;; 17) action_telegram ;;
       18) action_lang ;;    19) action_ports ;;
       20) action_cleanup ;;  21) action_debug ;;
-      22) action_probe ;;    23) action_update ;;
+      22) action_probe ;;    23) action_migrate ;;
+      24) action_update ;;
       0|q|Q) banner; printf '  %sBye.%s\n\n' "$GRN" "$R"; exit 0 ;;
       *) bad "$(t invalid)"; sleep 1 ;;
     esac
@@ -3128,6 +3246,7 @@ main() {
     --debug)   action_debug ;;
     --cleanup) action_cleanup ;;
     --probe)   action_probe ;;
+    --migrate) action_migrate ;;
     --bot)     bot_installed || bot_install_files; exec "$BOT_FILE" ;;
     "")        main_menu ;;
     *)         usage; exit 1 ;;

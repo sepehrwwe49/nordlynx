@@ -461,6 +461,38 @@ NordVPN will then fail to connect on current versions.
 > Run it on a machine where that is acceptable, and keep the SOCKS ports bound to
 > `127.0.0.1`.
 
+## TCP-only proxies break browsers (menu 23)
+
+`microsocks` speaks **TCP only**. Chat apps keep working, but browsers fail with
+`DNS_PROBE_FINISHED` / "server DNS address could not be found", because modern browsers
+need UDP for **QUIC / HTTP3** and for DNS through the proxy.
+
+Since v3.1.0 locations run **GOST v3** instead, started as:
+
+```bash
+gost -L "socks5://:1080?udp=true"
+```
+
+`?udp=true` is not optional — GOST v3 keeps the UDP relay off by default and answers
+`socks5: UDP relay is disabled`, which looks exactly like the TCP-only problem.
+
+Already built locations keep their old engine until you migrate them:
+
+```
+   23  Upgrade existing locations to the UDP proxy (GOST)
+
+  CONTAINER                  COUNTRY              PORT    ENGINE       ACTION
+  nord-1-united-states       United_States        1081    microsocks   → gost
+  nord-2-turkey              Turkey               1082    gost         up to date
+```
+
+It rebuilds each one with the same name, port, country and token, so nothing changes in
+your Marzban / Pasarguard config. Headless: `sudo nordlynx --migrate`.
+Per location you can still switch back (menu 6 → item 14) or set the default (menu 16 → item 10).
+
+> Keep the SOCKS ports bound to `127.0.0.1`. Published on `0.0.0.0` they get hammered by
+> internet scanners — the logs fill with `bad version` and the proxy process chokes.
+
 ## One container = one NordVPN device
 
 NordVPN allows a limited number of **simultaneous devices** (6 on older plans, 10 on
